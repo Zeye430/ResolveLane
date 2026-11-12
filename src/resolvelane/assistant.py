@@ -7,19 +7,9 @@ record shows, and anything that needs a decision is flagged for a support agent.
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from enum import Enum
 
+from resolvelane.domain.case import Issue
 from resolvelane.domain.delivery import Order, OrderStatus
-
-
-class Issue(str, Enum):
-    LATE_DELIVERY = "late_delivery"
-    MISSING_ITEM = "missing_item"
-    WRONG_ITEM = "wrong_item"
-    DAMAGED_ITEM = "damaged_item"
-    CANCELLATION = "cancellation"
-    DELIVERY_STATUS = "delivery_status"
-    UNKNOWN = "unknown"
 
 
 _PATTERNS = {
@@ -96,10 +86,8 @@ def _item_report(order: Order, issues: list[Issue]) -> tuple[str, bool]:
     return f"I've noted your report of a {kinds} item. The order contained: {contents}.", True
 
 
-def respond(message: str, order_id: str | None, order: Order | None) -> AssistantReply:
-    """Build a reply. ``order`` is None when no order was given or it is not available to the customer."""
-    issues = detect_issues(message)
-
+def respond(issues: list[Issue], order_id: str | None, order: Order | None) -> AssistantReply:
+    """Answer ``issues``. ``order`` is None when no order was given or it is not available to the customer."""
     if order_id is None:
         prefix = "" if issues != [Issue.UNKNOWN] else HELP_TEXT + " "
         return AssistantReply(prefix + "Please share your order number so I can check it.", issues, False)

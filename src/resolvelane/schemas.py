@@ -8,7 +8,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from resolvelane.assistant import Issue
+from resolvelane.domain.case import CaseStatus, Issue, MessageRole
 from resolvelane.domain.delivery import DeliveryEventType, OrderStatus
 
 
@@ -45,13 +45,34 @@ class CustomerOrderView(_View):
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=2000)
     order_id: str | None = Field(default=None, min_length=1, max_length=64)
+    case_id: str | None = Field(default=None, min_length=1, max_length=64,
+                                description="Continue an existing case; omit to start a new one")
 
 
 class ChatResponse(BaseModel):
+    case_id: str
+    case_status: CaseStatus
     reply: str
-    issues: list[Issue]
-    order_id: str | None
+    issues: list[Issue] = Field(description="Issues answered by this reply")
+    order_id: str | None = Field(description="The order this case is about, once it has been found")
     needs_human_review: bool
+
+
+class CaseMessageView(_View):
+    role: MessageRole
+    text: str
+    sent_at: datetime
+
+
+class CaseView(_View):
+    """A case as its customer may see it; pending issues are internal bookkeeping."""
+
+    case_id: str
+    order_id: str | None
+    status: CaseStatus
+    issues: list[Issue]
+    created_at: datetime
+    messages: list[CaseMessageView]
 
 
 class ErrorResponse(BaseModel):

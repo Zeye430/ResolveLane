@@ -7,9 +7,10 @@ from fastapi import Depends, FastAPI, HTTPException, Path, Request
 from pydantic import BaseModel
 
 from resolvelane.access import Principal, Role, TokenRegistry, load_token_registry
-from resolvelane.assistant import respond
-from resolvelane.schemas import ChatRequest, ChatResponse, CustomerOrderView, ErrorResponse
+from resolvelane.case_store import InMemoryCaseStore
+from resolvelane.schemas import CaseView, ChatRequest, ChatResponse, CustomerOrderView, ErrorResponse
 from resolvelane.services.order_lookup import OrderAccess, OrderSource, lookup_order
+from resolvelane.services.support_chat import CaseNotFound, OrderMismatch, get_case, handle_message
 from resolvelane.simulator.fixtures import ORDERS
 from resolvelane.simulator.order_source import InMemoryOrderSource
 
@@ -38,10 +39,12 @@ def require_customer(principal: Annotated[Principal, Depends(require_principal)]
     return principal
 
 
-def create_app(token_registry: TokenRegistry | None = None, order_source: OrderSource | None = None) -> FastAPI:
+def create_app(token_registry: TokenRegistry | None = None, order_source: OrderSource | None = None,
+               case_store: InMemoryCaseStore | None = None) -> FastAPI:
     app = FastAPI(title="ResolveLane API", version="0.1.0")
     app.state.token_registry = token_registry if token_registry is not None else load_token_registry()
     app.state.order_source = order_source if order_source is not None else InMemoryOrderSource(ORDERS)
+    app.state.case_store = case_store if case_store is not None else InMemoryCaseStore()
 
     @app.get("/health", response_model=HealthResponse, tags=["Health"])
     def health() -> HealthResponse:
@@ -75,23 +78,62 @@ def create_app(token_registry: TokenRegistry | None = None, order_source: OrderS
         "/api/v1/chat",
         response_model=ChatResponse,
         tags=["Chat"],
-        summary="Send a support message about one of the caller's simulated orders",
-        responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}, 503: {"model": ErrorResponse}},
+        summary="Send a support message, starting a new case or continuing an existing one",
+        responses={
+            401: {"model": ErrorResponse},
+            403: {"model": ErrorResponse},
+            404: {"model": ErrorResponse, "description": "The case does not exist or belongs to another customer"},
+            409: {"model": ErrorResponse, "description": "The case is about a different order"},
+            503: {"model": ErrorResponse},
+        },
     )
     def chat(
         body: ChatRequest,
         principal: Annotated[Principal, Depends(require_customer)],
         request: Request,
     ) -> ChatResponse:
-        order = None
-        if body.order_id is not None:
-            # Another customer's order yields None, the same as an unknown order.
-            order = lookup_order(request.app.state.order_source, principal.subject_id, body.order_id).order
-        answer = respond(body.message, body.order_id, order)
-        return ChatResponse(reply=answer.reply, issues=answer.issues, order_id=body.order_id,
-                            needs_human_review=answer.needs_human_review)
+        try:
+            turn = handle_message(request.app.state.case_store, request.app.state.order_source,
+                                  principal.subject_id, body.message, body.case_id, body.order_id)
+        except CaseNotFound:
+            raise HTTPException(404, "Case not found") from None
+        except OrderMismatch as error:
+            raise HTTPException(409, str(error)) from None
+        return ChatResponse(case_id=turn.case.case_id, case_status=turn.case.status, reply=turn.reply.reply,
+                            issues=turn.reply.issues, order_id=turn.case.order_id,
+                            needs_human_review=turn.reply.needs_human_review)
+
+    @app.get(
+        "/api/v1/cases/{case_id}",
+        response_model=CaseView,
+        tags=["Cases"],
+        summary="Read one of the caller's cases with its conversation",
+        responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse},
+                   404: {"model": ErrorResponse}, 503: {"model": ErrorResponse}},
+    )
+    def read_case(
+        case_id: Annotated[str, Path(min_length=1, max_length=64)],
+        principal: Annotated[Principal, Depends(require_customer)],
+        request: Request,
+    ) -> CaseView:
+        try:
+            case = get_case(request.app.state.case_store, principal.subject_id, case_id)
+        except CaseNotFound:
+            raise HTTPException(404, "Case not found") from None
+        return CaseView.model_validate(case)
 
     return app
 
 
+def _show_application_logs() -> None:
+    """Print ResolveLane's INFO records when served by uvicorn, which only configures its own loggers."""
+    package_logger = logging.getLogger("resolvelane")
+    if not package_logger.handlers:
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter("%(levelname)s:     %(name)s %(message)s"))
+        package_logger.addHandler(handler)
+        package_logger.setLevel(logging.INFO)
+
+
 app = create_app()
+_show_application_logs()
