@@ -23,6 +23,18 @@ The health endpoint reports that the application is running; it does not check e
 
 The delivery domain includes fictional orders, delivery events, support policies, and customer-report scenarios for development and tests. Customer reports are not verified facts, and expected review paths are test descriptions, not implemented functionality. The examples do not contain real platform records, execute refunds, or represent the policies of an existing marketplace.
 
+## Support chat
+
+`POST /api/v1/chat` accepts a customer message and an optional order ID, and replies with what the order record shows:
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/v1/chat \
+  -H "Authorization: Bearer local-dev-token-customer-101-xyz" -H "Content-Type: application/json" \
+  -d '{"message": "My order arrived late.", "order_id": "demo-order-1001"}'
+```
+
+This first version detects issues with keywords, with no language model, and keeps no conversation history. A customer's report is not treated as a fact: a late-delivery claim on an order delivered within its estimate is answered with the recorded times. Late deliveries, delivered-item reports and cancellations without a recorded reason are flagged with `needs_human_review`, but nothing is persisted or sent to an agent yet, and no refund is issued.
+
 ## Order lookup
 
 `resolvelane.services.order_lookup.lookup_order` provides read-only access to an order only when the requester's customer ID matches the order owner. Lookups of another customer's order are classified internally as denied but presented to customers as not found, so order IDs cannot be probed.

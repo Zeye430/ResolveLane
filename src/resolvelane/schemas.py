@@ -6,8 +6,9 @@ domain later are not exposed unless they are added here deliberately.
 
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
+from resolvelane.assistant import Issue
 from resolvelane.domain.delivery import DeliveryEventType, OrderStatus
 
 
@@ -39,6 +40,18 @@ class CustomerOrderView(_View):
     total_minor: int
     estimated_delivery_at: datetime
     delivery_events: tuple[DeliveryEventView, ...]
+
+
+class ChatRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=2000)
+    order_id: str | None = Field(default=None, min_length=1, max_length=64)
+
+
+class ChatResponse(BaseModel):
+    reply: str
+    issues: list[Issue]
+    order_id: str | None
+    needs_human_review: bool
 
 
 class ErrorResponse(BaseModel):

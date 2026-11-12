@@ -7,7 +7,8 @@ from fastapi import Depends, FastAPI, HTTPException, Path, Request
 from pydantic import BaseModel
 
 from resolvelane.access import Principal, Role, TokenRegistry, load_token_registry
-from resolvelane.schemas import CustomerOrderView, ErrorResponse
+from resolvelane.assistant import respond
+from resolvelane.schemas import ChatRequest, ChatResponse, CustomerOrderView, ErrorResponse
 from resolvelane.services.order_lookup import OrderAccess, OrderSource, lookup_order
 from resolvelane.simulator.fixtures import ORDERS
 from resolvelane.simulator.order_source import InMemoryOrderSource
@@ -69,6 +70,26 @@ def create_app(token_registry: TokenRegistry | None = None, order_source: OrderS
         if result.customer_visible_access is not OrderAccess.GRANTED:
             raise HTTPException(404, "Order not found")
         return CustomerOrderView.model_validate(result.order)
+
+    @app.post(
+        "/api/v1/chat",
+        response_model=ChatResponse,
+        tags=["Chat"],
+        summary="Send a support message about one of the caller's simulated orders",
+        responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}, 503: {"model": ErrorResponse}},
+    )
+    def chat(
+        body: ChatRequest,
+        principal: Annotated[Principal, Depends(require_customer)],
+        request: Request,
+    ) -> ChatResponse:
+        order = None
+        if body.order_id is not None:
+            # Another customer's order yields None, the same as an unknown order.
+            order = lookup_order(request.app.state.order_source, principal.subject_id, body.order_id).order
+        answer = respond(body.message, body.order_id, order)
+        return ChatResponse(reply=answer.reply, issues=answer.issues, order_id=body.order_id,
+                            needs_human_review=answer.needs_human_review)
 
     return app
 
