@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 from resolvelane.access import Principal, Role, TokenRegistry, load_token_registry
 from resolvelane.case_store import InMemoryCaseStore
+from resolvelane.recognition import IssueRecognizer, load_recognizer
 from resolvelane.schemas import CaseView, ChatRequest, ChatResponse, CustomerOrderView, ErrorResponse
 from resolvelane.services.order_lookup import OrderAccess, OrderSource, lookup_order
 from resolvelane.services.support_chat import CaseNotFound, OrderMismatch, get_case, handle_message
@@ -40,11 +41,12 @@ def require_customer(principal: Annotated[Principal, Depends(require_principal)]
 
 
 def create_app(token_registry: TokenRegistry | None = None, order_source: OrderSource | None = None,
-               case_store: InMemoryCaseStore | None = None) -> FastAPI:
+               case_store: InMemoryCaseStore | None = None, recognizer: IssueRecognizer | None = None) -> FastAPI:
     app = FastAPI(title="ResolveLane API", version="0.1.0")
     app.state.token_registry = token_registry if token_registry is not None else load_token_registry()
     app.state.order_source = order_source if order_source is not None else InMemoryOrderSource(ORDERS)
     app.state.case_store = case_store if case_store is not None else InMemoryCaseStore()
+    app.state.recognizer = recognizer if recognizer is not None else load_recognizer()
 
     @app.get("/health", response_model=HealthResponse, tags=["Health"])
     def health() -> HealthResponse:
@@ -94,7 +96,8 @@ def create_app(token_registry: TokenRegistry | None = None, order_source: OrderS
     ) -> ChatResponse:
         try:
             turn = handle_message(request.app.state.case_store, request.app.state.order_source,
-                                  principal.subject_id, body.message, body.case_id, body.order_id)
+                                  request.app.state.recognizer, principal.subject_id, body.message,
+                                  body.case_id, body.order_id)
         except CaseNotFound:
             raise HTTPException(404, "Case not found") from None
         except OrderMismatch as error:
@@ -135,5 +138,5 @@ def _show_application_logs() -> None:
         package_logger.setLevel(logging.INFO)
 
 
+_show_application_logs()  # before the app is built, so startup messages are shown
 app = create_app()
-_show_application_logs()

@@ -9,15 +9,17 @@ Python 3.10 or newer is required.
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install -e '.[dev]'
+python -m pip install -e '.[dev,local-embedding]'
 uvicorn resolvelane.api:app --reload
 ```
+
+The `local-embedding` extra installs the offline issue recognition tier (see below). Its ONNX runtime currently supports Python up to 3.14; on newer Python, install `.[dev]` and the tier is skipped.
 
 The health endpoint is available at `http://127.0.0.1:8000/health` and the API documentation at `http://127.0.0.1:8000/docs`.
 
 Run tests with `pytest`.
 
-The health endpoint reports that the application is running; it does not check external services. The support engine and integrations have not been added yet.
+The health endpoint reports that the application is running; it does not check external services or which issue recognition tiers are available.
 
 ## Delivery examples
 
@@ -25,15 +27,45 @@ The delivery domain includes fictional orders, delivery events, support policies
 
 ## Support chat
 
-`POST /api/v1/chat` accepts a customer message and an optional order ID, and replies with what the order record shows:
+`POST /api/v1/chat` accepts a customer message and an optional order ID (an order ID written in the message also works), and replies with what the order record shows:
 
 ```bash
 curl -X POST http://127.0.0.1:8000/api/v1/chat \
   -H "Authorization: Bearer local-dev-token-customer-101-xyz" -H "Content-Type: application/json" \
-  -d '{"message": "My order arrived late.", "order_id": "demo-order-1001"}'
+  -d '{"messa### Issue recognition
+
+Each message is classified into the supported issues by a ladder of tiers. The first tier that answers wins; a tier that is unsure abstains, and a tier whose provider fails is skipped:
+
+1. **Language model** (`llm`): uses the last few messages of the case as context and can find several issues in one message. Any Anthropic-compatible endpoint works.
+2. **Remote embedding** (`remote_embedding`): compares the message with example messages for each issue using an embedding model from a different provider, so it keeps working when the language model provider is down. Any OpenAI-compatible `/embeddings` endpoint works.
+3. **Local embedding** (`local_embedding`): the same comparison with a small model on this machine, so it works without a network connection. The model is loaded at startup and cached in a fixed directory.
+4. **Keywords** (`keywords`): fixed phrases.
+
+When no tier answers, the issue is unknown and the reply lists what support can help with instead of guessing. The model and embedding tiers only choose labels from a fixed list; they do not decide which order a customer may see or what happens to a case. Order IDs are extracted from the message by a rule. Tests never call a provider.
+
+```bash
+export ANTHROPIC_API_KEY=...                          # enables the language model
+export ANTHROPIC_MODEL=claude-opus-5-5                # optional; this is the default
+export ANTHROPIC_BASE_URL=...                         # optional, for a compatible provider
+export RESOLVELANE_LLM_TIMEOUT_S=10                   # optional
+
+export RESOLVELANE_EMBEDDING_API_KEY=...              # enables the remote embedding tier
+export RESOLVELANE_EMBEDDING_BASE_URL=https://api.siliconflow.cn/v1   # optional; this is the default
+export RESOLVELANE_EMBEDDING_MODEL=BAAI/bge-m3        # optional; this is the default
+
+export RESOLVELANE_LOCAL_EMBEDDING_MODEL=BAAI/bge-small-en-v1.5       # optional; "off" disables the tier
+export RESOLVELANE_MODEL_CACHE_DIR=~/.cache/resolvelane/models        # optional; this is the default
 ```
 
-This first version detects issues with keywords, with no language model, and keeps no conversation history. A customer's report is not treated as a fact: a late-delivery claim on an order delivered within its estimate is answered with the recorded times. Late deliveries, delivered-item reports and cancellations without a recorded reason are flagged with `needs_human_review`, but nothing is persisted or sent to an agent yet, and no refund is issued.
+The language model tier is skipped for 30 seconds after three consecutive provider failures, and the remote embedding tier for 60 seconds after one; after the pause a single request tries the provider again. Unusable model answers (invalid or low-confidence JSON, refusals) fall through to the next tier without counting as provider failures.
+
+An embedding tier answers only when a message is similar enough to the examples of one issue, using thresholds measured per model with `python scripts/calibrate_embeddings.py local|remote`. A model without measured thresholds is not used unless `RESOLVELANE_EMBEDDING_THRESHOLD` and `RESOLVELANE_EMBEDDING_MARGIN` (or the `RESOLVELANE_LOCAL_EMBEDDING_` equivalents) are set. Thresholds have been measured for `BAAI/bge-small-en-v1.5` only: on 44 held-out messages it answered 39 correctly, 2 wrongly and passed 3 to the next tier. Those figures come from the same messages the thresholds were fitted to, so they are optimistic.
+
+rom the message by a rule, not by the model. Without a key, or when the model fails, times out, declines, or returns an unusable or low-confidence answer, keyword matching is used instead. Tests never call a model.
+
+Each conversation is a case. The first message returns a `case_id`; sending it with later messages continues the case. A case remembers its order, so follow-ups need not repeat the order ID, and an issue raised before the order ID is known is answered once it arrives. A case is bound only to an order the customer may access and cannot switch to another order (`409`). Another customer's case returns `404`, the same as an unknown case. `GET /api/v1/cases/{case_id}` returns the case with its messages.
+
+Late deliveries, delivered-item reports and cancellations without a recorded reason move the case to `needs_review`. No support agent workflow exists yet to pick it up, and no refund is issued. Cases are kept in process memory and are lost when the server restarts.
 
 ## Order lookup
 
@@ -48,4 +80,4 @@ export RESOLVELANE_API_TOKENS='{"local-dev-token-customer-101-xyz": {"subject_id
 curl -H "Authorization: Bearer local-dev-token-customer-101-xyz" http://127.0.0.1:8000/api/v1/orders/demo-order-1001
 ```
 
-Without tokens, protected endpoints return `503` in development, and the application refuses to start when `RESOLVELANE_ENV=production`. Static tokens are a development mechanism for simulated accounts, not production authentication. Each lookup emits an INFO record on the `resolvelane.api` logger with its internal outcome; the default uvicorn configuration does not display it, and durable audit records are not implemented yet.
+Without tokens, protected endpoints return `503` in development, and the application refuses to start when `RESOLVELANE_ENV=production`. Static tokens are a development mechanism for simulated accounts, not production authentication. Order lookups and case status changes are logged at INFO level under the `resolvelane` logger, including whether a lookup was denied or not found. Logs are not a durable audit trail.
