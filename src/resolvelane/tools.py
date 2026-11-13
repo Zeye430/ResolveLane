@@ -21,6 +21,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from resolvelane.domain.case import Issue
 from resolvelane.domain.delivery import Order, SupportPolicy
+from resolvelane.knowledge import HelpCenter, Passage
 
 logger = logging.getLogger("resolvelane.tools")
 
@@ -36,7 +37,10 @@ class ToolContext:
     order: Order | None
     now: datetime
     policies: Sequence[SupportPolicy]
+    help_center: HelpCenter | None = None
     effects: list[ReviewRequest] = field(default_factory=list)
+    # Help center passages returned during this reply; a reply may cite only these.
+    retrieved: dict[str, Passage] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -100,6 +104,22 @@ def get_support_policy(context: ToolContext, args: PolicyInput) -> dict[str, Any
     return {"issue": args.issue, **policy_in_effect(context.policies, args.issue, context.now)}
 
 
+class SearchInput(_Input):
+    query: str = Field(min_length=3, max_length=200,
+                       description="What to look up, in a few words, e.g. 'refund arrival time'")
+
+
+def search_help_center(context: ToolContext, args: SearchInput) -> dict[str, Any]:
+    if context.help_center is None:
+        return {"passages": [], "note": "The help center is not available."}
+    result = context.help_center.search(args.query, context.now)
+    context.retrieved.update((passage.source_id, passage) for passage in result.passages)
+    if not result.passages:
+        return {"passages": [], "note": "Nothing in the help center matches. Do not answer from memory."}
+    return {"passages": [{"source_id": passage.source_id, "article": passage.citation.title,
+                          "section": passage.heading, "text": passage.text} for passage in result.passages]}
+
+
 class ReviewInput(_Input):
     reason: str = Field(min_length=1, max_length=300, description="Why a support agent should look at this case")
 
@@ -113,6 +133,11 @@ def request_human_review(context: ToolContext, args: ReviewInput) -> dict[str, A
 
 
 SUPPORT_TOOLS = (
+    ToolSpec("search_help_center",
+             "Search the help center articles currently in effect, for general questions such as refund "
+             "timing, cancelling, changing the address, or reporting a problem. Returns passages with a "
+             "source_id to cite; returns none when the help center does not cover the question.",
+             SearchInput, search_help_center),
     ToolSpec("get_support_policy",
              "Look up the support policy currently in effect for an issue. Use it before describing how "
              "an issue is handled. Returns no policy when none is in effect.",

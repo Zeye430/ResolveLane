@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 
 from resolvelane.domain.case import Issue
 from resolvelane.domain.delivery import Order, OrderStatus
+from resolvelane.domain.knowledge import Citation
 
 
 _PATTERNS = {
@@ -40,6 +41,7 @@ class AssistantReply:
     reply: str
     issues: list[Issue]
     needs_human_review: bool
+    citations: tuple[Citation, ...] = ()  # help center sections the reply relies on
 
 
 def _time(value: datetime) -> str:

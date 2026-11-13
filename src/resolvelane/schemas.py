@@ -42,6 +42,15 @@ class CustomerOrderView(_View):
     delivery_events: tuple[DeliveryEventView, ...]
 
 
+class CitationView(_View):
+    """The help center article version and section a reply relied on."""
+
+    article_id: str
+    version: int
+    title: str
+    section: str
+
+
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=2000)
     order_id: str | None = Field(default=None, min_length=1, max_length=64)
@@ -56,12 +65,15 @@ class ChatResponse(BaseModel):
     issues: list[Issue] = Field(description="Issues answered by this reply")
     order_id: str | None = Field(description="The order this case is about, once it has been found")
     needs_human_review: bool
+    citations: list[CitationView] = Field(default_factory=list,
+                                          description="Help center sections the reply relies on")
 
 
 class CaseMessageView(_View):
     role: MessageRole
     text: str
     sent_at: datetime
+    citations: list[CitationView]
 
 
 class CaseView(_View):

@@ -4,6 +4,8 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime
 from enum import Enum
 
+from resolvelane.domain.knowledge import Citation
+
 
 class Issue(str, Enum):
     LATE_DELIVERY = "late_delivery"
@@ -36,6 +38,8 @@ class CaseMessage:
     role: MessageRole
     text: str
     sent_at: datetime
+    # For assistant messages: the exact help center versions the reply relied on.
+    citations: tuple[Citation, ...] = ()
 
 
 @dataclass

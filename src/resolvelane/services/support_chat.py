@@ -128,10 +128,10 @@ def _draft(agent: ReplyAgent | None, plan: ReplyPlan, customer_id: str, message:
     return None
 
 
-def _record(cases: InMemoryCaseStore, case: Case, message: str, reply: str) -> None:
+def _record(cases: InMemoryCaseStore, case: Case, message: str, reply: AssistantReply) -> None:
     now = cases.clock()
     case.messages.append(CaseMessage(MessageRole.CUSTOMER, message, now))
-    case.messages.append(CaseMessage(MessageRole.ASSISTANT, reply, now))
+    case.messages.append(CaseMessage(MessageRole.ASSISTANT, reply.reply, now, reply.citations))
 
 
 def handle_message(cases: InMemoryCaseStore, orders: OrderSource, recognizer: IssueRecognizer,
@@ -168,20 +168,21 @@ def handle_message(cases: InMemoryCaseStore, orders: OrderSource, recognizer: Is
             logger.info("order_lookup case=%s access=%s subject=%s order_id=%r", case.case_id,
                         plan.lookup.access.value, customer_id, plan.looked_up_order_id)
         if plan.redirect:
-            _record(cases, case, message, plan.reply.reply)
+            _record(cases, case, message, plan.reply)
             return ChatTurn(case.snapshot(), plan.reply)
 
         review_request = draft.review_request if draft else None
         reply = AssistantReply(draft.reply if draft else plan.reply.reply, plan.reply.issues,
-                               plan.reply.needs_human_review or review_request is not None)
+                               plan.reply.needs_human_review or review_request is not None,
+                               draft.citations if draft else ())
         if draft:
-            logger.info("reply case=%s source=agent rounds=%d tools=%s", case.case_id, draft.rounds,
+            logger.info("reply case=%s source=agent rounds=%d tools=%s citations=%s", case.case_id, draft.rounds,
                         ",".join(f"{trace.name}:{'ok' if trace.ok else trace.error}" for trace in draft.tool_traces)
-                        or "-")
+                        or "-", ",".join(citation.source_id for citation in draft.citations) or "-")
         else:
             logger.info("reply case=%s source=rules", case.case_id)
 
-        _record(cases, case, message, reply.reply)
+        _record(cases, case, message, reply)
         case.issues = ordered_issues(case.issues + plan.new_issues)
         if plan.order is not None:
             # Bind only an order the customer may access, never one that failed the lookup.

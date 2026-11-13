@@ -249,22 +249,35 @@ def _remote_embedding_rung(environ: Mapping[str, str]) -> Rung | None:
     return Rung(tier, CircuitBreaker("remote_embedding", failure_threshold=1, cooldown_s=60))
 
 
-def _local_embedding_rung(environ: Mapping[str, str]) -> Rung | None:
+def load_local_embedder(environ: Mapping[str, str] = os.environ) -> LocalEmbedder | None:
+    """The local embedding model, loaded once and shared by recognition and help center search."""
     model = environ.get("RESOLVELANE_LOCAL_EMBEDDING_MODEL", "").strip() or DEFAULT_LOCAL_EMBEDDING_MODEL
     if model.lower() == "off":
-        return None
-    thresholds = _thresholds(environ, "RESOLVELANE_LOCAL_EMBEDDING", model)
-    if thresholds is None:
-        logger.warning("local embedding tier is off: no calibrated thresholds for %s; "
-                       "run scripts/calibrate_embeddings.py", model)
         return None
     # A fixed cache directory: the system temporary folder may be cleared, and the model must
     # already be on disk when the network is down.
     cache_dir = (environ.get("RESOLVELANE_MODEL_CACHE_DIR", "").strip()
                  or str(Path.home() / ".cache" / "resolvelane" / "models"))
     try:
-        matcher = EmbeddingMatcher(LocalEmbedder(model, cache_dir), *thresholds)
-        matcher.warm_up()  # load the model and example vectors now, not during an outage
+        return LocalEmbedder(model, cache_dir)
+    except Exception as error:
+        logger.warning("local embedding model is off: %s", error if isinstance(error, EmbeddingError)
+                       else type(error).__name__)
+        return None
+
+
+def _local_embedding_rung(environ: Mapping[str, str], embedder: LocalEmbedder | None) -> Rung | None:
+    if embedder is None:
+        return None
+    model = embedder.name.removeprefix("local/")
+    thresholds = _thresholds(environ, "RESOLVELANE_LOCAL_EMBEDDING", model)
+    if thresholds is None:
+        logger.warning("local embedding tier is off: no calibrated thresholds for %s; "
+                       "run scripts/calibrate_embeddings.py", model)
+        return None
+    matcher = EmbeddingMatcher(embedder, *thresholds)
+    try:
+        matcher.warm_up()  # compute example vectors now, not during an outage
     except Exception as error:
         logger.warning("local embedding tier is off: %s", error if isinstance(error, EmbeddingError)
                        else type(error).__name__)
@@ -272,12 +285,19 @@ def _local_embedding_rung(environ: Mapping[str, str]) -> Rung | None:
     return Rung(EmbeddingTier("local_embedding", matcher))
 
 
-def load_recognizer(environ: Mapping[str, str] = os.environ, llm: LLMProvider | None = None) -> CascadeRecognizer:
-    """Build the ladder from settings; ``llm`` shares an existing provider and its circuit breaker."""
+_LOAD_FROM_SETTINGS = object()
+
+
+def load_recognizer(environ: Mapping[str, str] = os.environ, llm: LLMProvider | None = None,
+                    local_embedder: Any = _LOAD_FROM_SETTINGS) -> CascadeRecognizer:
+    """Build the ladder from settings. ``llm`` and ``local_embedder`` share instances the caller
+    already loaded (the provider with its circuit breaker, the model with its memory)."""
     llm = llm or load_llm_provider(environ)
+    if local_embedder is _LOAD_FROM_SETTINGS:
+        local_embedder = load_local_embedder(environ)
     llm_rung = Rung(LLMTier(llm.client, llm.model), llm.breaker) if llm else None
     rungs = [rung for rung in (llm_rung, _remote_embedding_rung(environ),
-                               _local_embedding_rung(environ)) if rung is not None]
+                               _local_embedding_rung(environ, local_embedder)) if rung is not None]
     recognizer = CascadeRecognizer([*rungs, Rung(KeywordTier())])
     logger.info("issue_recognition tiers=%s", ",".join(recognizer.tier_names))
     return recognizer

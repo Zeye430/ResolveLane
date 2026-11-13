@@ -21,7 +21,7 @@ def run(name, args, ctx=None, gateway=None):
 
 def test_definitions_use_plain_json_schema():
     definitions = {item["name"]: item for item in ToolGateway().definitions()}
-    assert set(definitions) == {"get_support_policy", "request_human_review"}
+    assert set(definitions) == {"search_help_center", "get_support_policy", "request_human_review"}
     schema = definitions["get_support_policy"]["input_schema"]
     assert schema["additionalProperties"] is False
     assert schema["required"] == ["issue"]
@@ -98,3 +98,31 @@ def test_failing_tool_is_an_error_result(caplog):
 
 def test_support_tools_are_the_default():
     assert list(ToolGateway().specs) == [spec.name for spec in SUPPORT_TOOLS]
+
+
+# --- help center search ------------------------------------------------------
+
+def test_search_returns_citable_passages_and_records_them():
+    from resolvelane.knowledge import HelpCenter
+    from resolvelane.simulator.help_center import ARTICLES
+    ctx = ToolContext("demo-customer-101", ORDER, NOW, POLICIES, HelpCenter(ARTICLES))
+    payload, result = run("search_help_center", {"query": "refund arrival time"}, ctx)
+    assert not result.is_error
+    first = payload["passages"][0]
+    assert first["source_id"] == "refund-timing@2#arrival"
+    assert "3 to 5 business days" in first["text"]
+    assert set(ctx.retrieved) == {passage["source_id"] for passage in payload["passages"]}
+
+
+def test_search_with_no_match_says_not_to_guess():
+    from resolvelane.knowledge import HelpCenter
+    from resolvelane.simulator.help_center import ARTICLES
+    ctx = ToolContext("demo-customer-101", ORDER, NOW, POLICIES, HelpCenter(ARTICLES))
+    payload, _ = run("search_help_center", {"query": "pay with cash"}, ctx)
+    assert payload["passages"] == [] and "Do not answer from memory" in payload["note"]
+    assert ctx.retrieved == {}
+
+
+def test_search_without_a_help_center():
+    payload, result = run("search_help_center", {"query": "refund arrival"})
+    assert payload["passages"] == [] and not result.is_error

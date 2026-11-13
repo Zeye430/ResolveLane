@@ -80,7 +80,8 @@ def test_reply_is_grounded_in_case_facts():
     assert result.rounds == 1 and result.review_request is None
     call = client.calls[0]
     assert call["system"] == SYSTEM_PROMPT and "temperature" not in call
-    assert {tool["name"] for tool in call["tools"]} == {"get_support_policy", "request_human_review"}
+    assert {tool["name"] for tool in call["tools"]} == {"search_help_center", "get_support_policy",
+                                                        "request_human_review"}
     prompt = call["messages"][0]["content"]
     facts = json.loads(prompt.split("<case_facts>\n")[1].split("\n</case_facts>")[0])
     assert facts["delivered_minutes_after_estimate"] == 15
@@ -192,6 +193,83 @@ def test_open_breaker_skips_the_model():
     assert client.calls == []
 
 
+# --- help center answers --------------------------------------------------------
+
+from resolvelane.knowledge import HelpCenter  # noqa: E402
+from resolvelane.reply_agent import ungrounded_numbers  # noqa: E402
+from resolvelane.simulator.help_center import ARTICLES  # noqa: E402
+
+
+def answer(reply, *sources):
+    return text(json.dumps({"reply": reply, "sources": list(sources)}))
+
+
+def help_draft(*outcomes, **overrides):
+    agent = ReplyAgent(provider(ScriptedClient(*outcomes)), POLICIES, HelpCenter(ARTICLES))
+    return agent.draft(request(**{"review_required": False, "issues": [Issue.UNKNOWN], **overrides}))
+
+
+SEARCH = tool_use("search_help_center", {"query": "refund arrival time"})
+
+
+def test_answer_from_the_help_center_carries_its_citation():
+    result = help_draft(SEARCH, answer("Once approved, a refund reaches your card within 3 to 5 business days.",
+                                       "refund-timing@2#arrival"))
+    assert result.reply.startswith("Once approved")
+    assert [citation.source_id for citation in result.citations] == ["refund-timing@2#arrival"]
+    assert result.citations[0].version == 2
+
+
+def test_citing_a_passage_that_was_not_retrieved_is_rejected():
+    with pytest.raises(AgentFailed, match="cites_unretrieved_source"):
+        help_draft(answer("Refunds take 3 to 5 business days.", "refund-timing@2#arrival"))
+
+
+def test_citing_an_outdated_version_is_rejected():
+    with pytest.raises(AgentFailed, match="cites_unretrieved_source"):
+        help_draft(SEARCH, answer("Refunds take 7 to 10 business days.", "refund-timing@1#arrival"))
+
+
+def test_number_from_an_uncited_passage_is_rejected():
+    with pytest.raises(AgentFailed, match="ungrounded_number"):
+        help_draft(SEARCH, answer("A refund reaches your card within 3 to 5 business days."))
+
+
+def test_invented_number_is_rejected_even_with_a_citation():
+    with pytest.raises(AgentFailed, match="ungrounded_number"):
+        help_draft(SEARCH, answer("A refund reaches your card within 9 business days.", "refund-timing@2#arrival"))
+
+
+@pytest.mark.parametrize("bad", ['{"reply": 5}', '{"reply": "Hi", "sources": "refund-timing@2#arrival"}',
+                                 '{"reply": "Hi", "sources": [3]}'])
+def test_malformed_answers_are_rejected(bad):
+    with pytest.raises(AgentFailed, match="invalid_"):
+        help_draft(text(bad))
+
+
+@pytest.mark.parametrize("reply,ok", [
+    ("Delivered at 18:55 UTC on Jan 15, 15 minutes late.", True),   # from 2026-01-15T18:55:00 and the facts
+    ("Your total was 24.50 USD.", None),                            # depends on the order's amounts
+    ("It will arrive at 19:30.", False),
+    ("Order demo-order-1001 is on its way.", True),
+    ("It is 07:50 now.", True),                                     # from a timestamp with microseconds
+])
+def test_numbers_must_appear_in_the_sources(reply, ok):
+    sources = '{"now": "2026-11-13T07:50:50.285317+00:00", ' \
+              '"delivered_at": "2026-01-15T18:55:00+00:00", "delivered_minutes_after_estimate": 15, ' \
+              '"order_id": "demo-order-1001", "total": "24.50"}'
+    missing = ungrounded_numbers(reply, sources)
+    assert (missing == []) is (ok is not False)
+
+
+def test_order_amounts_are_given_as_written_to_customers():
+    client = ScriptedClient(text("Your order total is shown on the receipt."))
+    ReplyAgent(provider(client), POLICIES).draft(request())
+    facts = json.loads(client.calls[0]["messages"][0]["content"].split("<case_facts>\n")[1].split("\n</case_facts>")[0])
+    total = ORDER.total_minor / 100
+    assert facts["amounts"]["total"] == f"{total:.2f}"
+
+
 # --- the agent in a conversation -----------------------------------------------
 
 TOKEN = "test-token-demo-customer-101-xxxxxxxx"
@@ -217,6 +295,17 @@ class Api:
         response = asyncio.run(send())
         assert response.status_code == 200, response.text
         return response.json()
+
+
+def test_cited_answer_is_returned_and_kept_with_the_message():
+    client = ScriptedClient(SEARCH, answer("Once approved, a refund reaches your card within 3 to 5 business days.",
+                                           "refund-timing@2#arrival"))
+    api = Api(ReplyAgent(provider(client), POLICIES, HelpCenter(ARTICLES)))
+    turn = api.chat("How long do refunds take?")
+    assert turn["citations"] == [{"article_id": "refund-timing", "version": 2, "title": "How refunds work",
+                                  "section": "arrival"}]
+    message = api.store.get(turn["case_id"]).messages[-1]
+    assert [citation.source_id for citation in message.citations] == ["refund-timing@2#arrival"]
 
 
 def test_agent_reply_is_sent_and_recorded():
