@@ -13,6 +13,13 @@ python -m pip install -e '.[dev,local-embedding]'
 uvicorn resolvelane.api:app --reload
 ```
 
+Settings are read from environment variables. For local development, copy `.env.example` to `.env` (ignored by git), fill in the values you use, and load it into the shell before starting the server or running scripts:
+
+```bash
+cp .env.example .env
+set -a && source .env && set +a
+```
+
 The `local-embedding` extra installs the offline issue recognition tier (see below). Its ONNX runtime currently supports Python up to 3.14; on newer Python, install `.[dev]` and the tier is skipped.
 
 The health endpoint is available at `http://127.0.0.1:8000/health` and the API documentation at `http://127.0.0.1:8000/docs`.
@@ -62,6 +69,14 @@ The language model tier is skipped for 30 seconds after three consecutive provid
 An embedding tier answers only when a message is similar enough to the examples of one issue, using thresholds measured per model with `python scripts/calibrate_embeddings.py local|remote`. A model without measured thresholds is not used unless `RESOLVELANE_EMBEDDING_THRESHOLD` and `RESOLVELANE_EMBEDDING_MARGIN` (or the `RESOLVELANE_LOCAL_EMBEDDING_` equivalents) are set. Thresholds have been measured for `BAAI/bge-small-en-v1.5` only: on 44 held-out messages it answered 39 correctly, 2 wrongly and passed 3 to the next tier. Those figures come from the same messages the thresholds were fitted to, so they are optimistic.
 
 rom the message by a rule, not by the model. Without a key, or when the model fails, times out, declines, or returns an unusable or low-confidence answer, keyword matching is used instead. Tests never call a model.
+
+### Replies
+
+When a language model is configured, a reply agent writes each reply; otherwise replies are built by rules. Rules still make every decision: which order the customer may see, how late a delivery was, which policy is in effect, and whether the case goes to a support agent. The agent receives those results as case facts, together with the rule-based reply, and answers the customer's actual question from them.
+
+The agent can call two tools through a gateway: `get_support_policy`, for an issue whose policy is not already in the case facts, and `request_human_review`, when the customer asks for a person or raises something the facts and policies do not settle. Tool inputs never name a customer or an order; the gateway gives each tool only the authenticated customer's case. A review request is a proposal that the conversation service applies to the case after re-checking it.
+
+A reply is not used, and the rule-based reply is sent instead, when the model is unavailable, stops early, makes more than three calls or four tool calls, writes more than 1,200 characters, or appears to promise a refund, credit, replacement or compensation. That last check is a phrase filter backing up the instructions, not a guarantee. When the case needs review, the reply always says so. Recognition and replies share the model's circuit breaker, so once the provider is found to be down, neither waits for it. If another message changes the case while a reply is being written, the reply is decided again by rules from the current case.
 
 Each conversation is a case. The first message returns a `case_id`; sending it with later messages continues the case. A case remembers its order, so follow-ups need not repeat the order ID, and an issue raised before the order ID is known is answered once it arrives. A case is bound only to an order the customer may access and cannot switch to another order (`409`). Another customer's case returns `404`, the same as an unknown case. `GET /api/v1/cases/{case_id}` returns the case with its messages.
 

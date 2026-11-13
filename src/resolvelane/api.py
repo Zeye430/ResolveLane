@@ -8,11 +8,13 @@ from pydantic import BaseModel
 
 from resolvelane.access import Principal, Role, TokenRegistry, load_token_registry
 from resolvelane.case_store import InMemoryCaseStore
+from resolvelane.llm import load_llm_provider
 from resolvelane.recognition import IssueRecognizer, load_recognizer
+from resolvelane.reply_agent import ReplyAgent, load_reply_agent
 from resolvelane.schemas import CaseView, ChatRequest, ChatResponse, CustomerOrderView, ErrorResponse
 from resolvelane.services.order_lookup import OrderAccess, OrderSource, lookup_order
 from resolvelane.services.support_chat import CaseNotFound, OrderMismatch, get_case, handle_message
-from resolvelane.simulator.fixtures import ORDERS
+from resolvelane.simulator.fixtures import ORDERS, POLICIES
 from resolvelane.simulator.order_source import InMemoryOrderSource
 
 logger = logging.getLogger("resolvelane.api")
@@ -41,12 +43,16 @@ def require_customer(principal: Annotated[Principal, Depends(require_principal)]
 
 
 def create_app(token_registry: TokenRegistry | None = None, order_source: OrderSource | None = None,
-               case_store: InMemoryCaseStore | None = None, recognizer: IssueRecognizer | None = None) -> FastAPI:
+               case_store: InMemoryCaseStore | None = None, recognizer: IssueRecognizer | None = None,
+               reply_agent: ReplyAgent | None = None) -> FastAPI:
     app = FastAPI(title="ResolveLane API", version="0.1.0")
     app.state.token_registry = token_registry if token_registry is not None else load_token_registry()
     app.state.order_source = order_source if order_source is not None else InMemoryOrderSource(ORDERS)
     app.state.case_store = case_store if case_store is not None else InMemoryCaseStore()
-    app.state.recognizer = recognizer if recognizer is not None else load_recognizer()
+    # Recognition and reply writing share one provider, so they share its circuit breaker too.
+    llm = load_llm_provider() if recognizer is None or reply_agent is None else None
+    app.state.recognizer = recognizer if recognizer is not None else load_recognizer(llm=llm)
+    app.state.reply_agent = reply_agent if reply_agent is not None else load_reply_agent(llm, POLICIES)
 
     @app.get("/health", response_model=HealthResponse, tags=["Health"])
     def health() -> HealthResponse:
@@ -97,7 +103,7 @@ def create_app(token_registry: TokenRegistry | None = None, order_source: OrderS
         try:
             turn = handle_message(request.app.state.case_store, request.app.state.order_source,
                                   request.app.state.recognizer, principal.subject_id, body.message,
-                                  body.case_id, body.order_id)
+                                  body.case_id, body.order_id, request.app.state.reply_agent)
         except CaseNotFound:
             raise HTTPException(404, "Case not found") from None
         except OrderMismatch as error:

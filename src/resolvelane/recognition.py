@@ -28,11 +28,11 @@ from resolvelane.assistant import detect_issues
 from resolvelane.domain.case import CaseMessage, Issue, ordered_issues
 from resolvelane.embeddings import (CALIBRATED_THRESHOLDS, EmbeddingError, EmbeddingMatcher, LocalEmbedder,
                                     RemoteEmbedder)
+from resolvelane.llm import DEFAULT_MODEL, REQUEST_ERRORS, LLMProvider, load_llm_provider
 from resolvelane.resilience import CircuitBreaker
 
 logger = logging.getLogger("resolvelane.recognition")
 
-DEFAULT_MODEL = "claude-opus-5-5"
 DEFAULT_EMBEDDING_BASE_URL = "https://api.siliconflow.cn/v1"
 DEFAULT_EMBEDDING_MODEL = "BAAI/bge-m3"
 DEFAULT_LOCAL_EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"
@@ -186,8 +186,6 @@ class LLMTier:
     name = "llm"
     MIN_CONFIDENCE = 0.5
     MAX_HISTORY = 6
-    # Errors caused by this request rather than the provider; they do not count against the breaker.
-    REQUEST_ERRORS = (400, 413, 422)
 
     def __init__(self, client: anthropic.Anthropic, model: str):
         self.client = client
@@ -209,7 +207,7 @@ class LLMTier:
         except anthropic.APIConnectionError as error:  # includes timeouts
             raise TierUnavailable(type(error).__name__) from None
         except anthropic.APIStatusError as error:
-            if error.status_code in self.REQUEST_ERRORS:
+            if error.status_code in REQUEST_ERRORS:
                 logger.warning("llm_recognition_rejected status=%s", error.status_code)
                 return None
             raise TierUnavailable(f"status_{error.status_code}") from None
@@ -231,19 +229,6 @@ def _thresholds(environ: Mapping[str, str], prefix: str, model: str) -> tuple[fl
     return CALIBRATED_THRESHOLDS.get(model)
 
 
-def _llm_rung(environ: Mapping[str, str]) -> Rung | None:
-    api_key = environ.get("ANTHROPIC_API_KEY", "").strip()
-    if not api_key:
-        logger.info("ANTHROPIC_API_KEY is not set; the language model tier is off")
-        return None
-    client = anthropic.Anthropic(
-        api_key=api_key,
-        base_url=environ.get("ANTHROPIC_BASE_URL", "").strip() or None,
-        timeout=float(environ.get("RESOLVELANE_LLM_TIMEOUT_S", "10")),
-        max_retries=1,
-    )
-    tier = LLMTier(client, environ.get("ANTHROPIC_MODEL", "").strip() or DEFAULT_MODEL)
-    return Rung(tier, CircuitBreaker("llm", failure_threshold=3, cooldown_s=30))
 
 
 def _remote_embedding_rung(environ: Mapping[str, str]) -> Rung | None:
@@ -287,8 +272,11 @@ def _local_embedding_rung(environ: Mapping[str, str]) -> Rung | None:
     return Rung(EmbeddingTier("local_embedding", matcher))
 
 
-def load_recognizer(environ: Mapping[str, str] = os.environ) -> CascadeRecognizer:
-    rungs = [rung for rung in (_llm_rung(environ), _remote_embedding_rung(environ),
+def load_recognizer(environ: Mapping[str, str] = os.environ, llm: LLMProvider | None = None) -> CascadeRecognizer:
+    """Build the ladder from settings; ``llm`` shares an existing provider and its circuit breaker."""
+    llm = llm or load_llm_provider(environ)
+    llm_rung = Rung(LLMTier(llm.client, llm.model), llm.breaker) if llm else None
+    rungs = [rung for rung in (llm_rung, _remote_embedding_rung(environ),
                                _local_embedding_rung(environ)) if rung is not None]
     recognizer = CascadeRecognizer([*rungs, Rung(KeywordTier())])
     logger.info("issue_recognition tiers=%s", ",".join(recognizer.tier_names))

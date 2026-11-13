@@ -155,6 +155,12 @@ def test_key_enables_the_model_with_configured_endpoint():
     assert recognizer.rungs[0].breaker is not None
 
 
+def test_empty_base_url_setting_uses_the_default_endpoint(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_BASE_URL", "")  # as left by an empty line in a .env file
+    tier = load_recognizer({**OFF, "ANTHROPIC_API_KEY": "test-key", "ANTHROPIC_BASE_URL": ""}).rungs[0].tier
+    assert str(tier.client.base_url).startswith("https://api.anthropic.com")
+
+
 def test_default_model_when_none_is_configured():
     assert load_recognizer({**OFF, "ANTHROPIC_API_KEY": "test-key"}).rungs[0].tier.model == DEFAULT_MODEL
 

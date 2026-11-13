@@ -50,8 +50,10 @@ class Case:
     # Issues raised before an accessible order was known; answered once it is.
     pending_issues: list[Issue] = field(default_factory=list)
     messages: list[CaseMessage] = field(default_factory=list)
+    # Why the assistant asked for a support agent, for whoever reviews the case. Internal only.
+    review_notes: list[str] = field(default_factory=list)
 
     def snapshot(self) -> "Case":
         """A copy that later updates to this case do not change."""
         return replace(self, issues=list(self.issues), pending_issues=list(self.pending_issues),
-                       messages=list(self.messages))
+                       messages=list(self.messages), review_notes=list(self.review_notes))
