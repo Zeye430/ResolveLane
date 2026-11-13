@@ -34,8 +34,7 @@ def test_remote_request_and_unit_vectors_in_input_order():
     request = seen[0]
     assert str(request.url) == "https://embeddings.example.test/v1/embeddings"
     assert request.headers["authorization"] == f"Bearer {KEY}"
-    assert json.loads(request.content) == {"model": "test-model", "input": ["first", "second"],
-                                           "encoding_format": "float"}
+    assert json.loads(request.content) == {"model": "test-model", "input": ["first", "second"]}
 
 
 def test_remote_requests_are_batched():

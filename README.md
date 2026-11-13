@@ -57,8 +57,8 @@ export ANTHROPIC_BASE_URL=...                         # optional, for a compatib
 export RESOLVELANE_LLM_TIMEOUT_S=10                   # optional
 
 export RESOLVELANE_EMBEDDING_API_KEY=...              # enables the remote embedding tier
-export RESOLVELANE_EMBEDDING_BASE_URL=https://api.siliconflow.cn/v1   # optional; this is the default
-export RESOLVELANE_EMBEDDING_MODEL=BAAI/bge-m3        # optional; this is the default
+export RESOLVELANE_EMBEDDING_BASE_URL=https://api.voyageai.com/v1    # optional; this is the default
+export RESOLVELANE_EMBEDDING_MODEL=voyage-4-lite      # optional; this is the default
 
 export RESOLVELANE_LOCAL_EMBEDDING_MODEL=BAAI/bge-small-en-v1.5       # optional; "off" disables the tier
 export RESOLVELANE_MODEL_CACHE_DIR=~/.cache/resolvelane/models        # optional; this is the default
@@ -66,7 +66,7 @@ export RESOLVELANE_MODEL_CACHE_DIR=~/.cache/resolvelane/models        # optional
 
 The language model tier is skipped for 30 seconds after three consecutive provider failures, and the remote embedding tier for 60 seconds after one; after the pause a single request tries the provider again. Unusable model answers (invalid or low-confidence JSON, refusals) fall through to the next tier without counting as provider failures.
 
-An embedding tier answers only when a message is similar enough to the examples of one issue, using thresholds measured per model with `python scripts/calibrate_embeddings.py local|remote`. A model without measured thresholds is not used unless `RESOLVELANE_EMBEDDING_THRESHOLD` and `RESOLVELANE_EMBEDDING_MARGIN` (or the `RESOLVELANE_LOCAL_EMBEDDING_` equivalents) are set. Thresholds have been measured for `BAAI/bge-small-en-v1.5` only: on 44 held-out messages it answered 39 correctly, 2 wrongly and passed 3 to the next tier. Those figures come from the same messages the thresholds were fitted to, so they are optimistic.
+An embedding tier answers only when a message is similar enough to the examples of one issue, using thresholds measured per model with `python scripts/calibrate_embeddings.py local|remote`. A model without measured thresholds is not used unless `RESOLVELANE_EMBEDDING_THRESHOLD` and `RESOLVELANE_EMBEDDING_MARGIN` (or the `RESOLVELANE_LOCAL_EMBEDDING_` equivalents) are set. Thresholds have been measured on 44 held-out messages for `voyage-4-lite` (35 correct, none wrong, 9 passed to the next tier) and `BAAI/bge-small-en-v1.5` (39 correct, 2 wrong, 3 passed on). Those figures come from the same messages the thresholds were fitted to, so they are optimistic. Voyage accounts without a payment method are limited to 3 requests a minute, too few for this tier during an outage.
 
 rom the message by a rule, not by the model. Without a key, or when the model fails, times out, declines, or returns an unusable or low-confidence answer, keyword matching is used instead. Tests never call a model.
 

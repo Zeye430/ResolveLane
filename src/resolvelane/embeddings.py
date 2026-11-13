@@ -28,6 +28,8 @@ CALIBRATED_THRESHOLDS: dict[str, tuple[float, float]] = {
     # 44 held-out messages: 39 right, 2 wrong, 3 passed to the next tier. A margin did not help
     # this model: requiring any lead dropped more right answers than wrong ones.
     "BAAI/bge-small-en-v1.5": (0.68, 0.00),
+    # 44 held-out messages: 35 right, 0 wrong, 9 passed to the next tier.
+    "voyage-4-lite": (0.55, 0.03),
 }
 
 
@@ -56,7 +58,7 @@ def cosine(a: Sequence[float], b: Sequence[float]) -> float:
 
 
 class RemoteEmbedder:
-    """An OpenAI-compatible /embeddings endpoint, such as SiliconFlow, Jina or Voyage."""
+    """An OpenAI-style /embeddings endpoint, such as Voyage, SiliconFlow or Jina."""
 
     BATCH_SIZE = 32
 
@@ -76,8 +78,8 @@ class RemoteEmbedder:
 
     def _request(self, texts: list[str]) -> list[list[float]]:
         try:
-            response = self._client.post("embeddings", json={"model": self.model, "input": texts,
-                                                             "encoding_format": "float"})
+            # No encoding_format: providers return float arrays by default, and Voyage rejects "float".
+            response = self._client.post("embeddings", json={"model": self.model, "input": texts})
             response.raise_for_status()
             rows = response.json().get("data")
         except httpx.HTTPStatusError as error:

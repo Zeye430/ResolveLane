@@ -33,8 +33,8 @@ from resolvelane.resilience import CircuitBreaker
 
 logger = logging.getLogger("resolvelane.recognition")
 
-DEFAULT_EMBEDDING_BASE_URL = "https://api.siliconflow.cn/v1"
-DEFAULT_EMBEDDING_MODEL = "BAAI/bge-m3"
+DEFAULT_EMBEDDING_BASE_URL = "https://api.voyageai.com/v1"
+DEFAULT_EMBEDDING_MODEL = "voyage-4-lite"
 DEFAULT_LOCAL_EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"
 ORDER_ID_PATTERN = re.compile(r"\b[a-z]+-order-\d{3,}\b", re.IGNORECASE)
 

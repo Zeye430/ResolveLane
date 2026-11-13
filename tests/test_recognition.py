@@ -318,8 +318,17 @@ def test_unusable_answers_do_not_count_as_an_outage():
 
 # --- embedding tier configuration -------------------------------------------
 
-def test_remote_embedding_needs_calibrated_thresholds(caplog):
+def test_remote_embedding_uses_calibrated_thresholds():
     recognizer = load_recognizer({**OFF, "RESOLVELANE_EMBEDDING_API_KEY": "test-key"})
+    assert recognizer.tier_names == ["remote_embedding", "keywords"]
+    matcher = recognizer.rungs[0].tier.matcher
+    assert matcher.embedder.name == "remote/voyage-4-lite"
+    assert (matcher.threshold, matcher.margin) == (0.55, 0.03)
+
+
+def test_remote_embedding_needs_calibrated_thresholds(caplog):
+    recognizer = load_recognizer({**OFF, "RESOLVELANE_EMBEDDING_API_KEY": "test-key",
+                                  "RESOLVELANE_EMBEDDING_MODEL": "BAAI/bge-m3"})
     assert recognizer.tier_names == ["keywords"]  # BAAI/bge-m3 has no calibrated thresholds yet
     assert any("no calibrated thresholds for BAAI/bge-m3" in record.getMessage() for record in caplog.records)
 
@@ -331,7 +340,7 @@ def test_remote_embedding_with_configured_thresholds():
     assert recognizer.tier_names == ["remote_embedding", "keywords"]
     rung = recognizer.rungs[0]
     assert (rung.tier.matcher.threshold, rung.tier.matcher.margin) == (0.6, 0.04)
-    assert rung.tier.matcher.embedder.name == "remote/BAAI/bge-m3"
+    assert rung.tier.matcher.embedder.name == "remote/voyage-4-lite"
     assert rung.breaker.failure_threshold == 1 and rung.breaker.cooldown_s == 60
 
 
