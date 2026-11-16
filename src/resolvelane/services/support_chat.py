@@ -13,6 +13,10 @@ A message sent with an idempotency key leaves a receipt, committed together with
 A retry with the same key and body gets the stored response instead of being handled again,
 so a client that lost a response can safely send the message again. The receipt is checked
 in phase 1 and again in phase 3, in case a duplicate of the request finished meanwhile.
+
+Phase 1 also gathers the agent's memory (see resolvelane.memory): the case summary, the
+messages it does not cover, and the customer's other recent cases. Once a conversation is
+long enough, phase 3 queues a new summary, which is written in the background.
 """
 
 import hashlib
@@ -24,9 +28,11 @@ from datetime import datetime
 
 from resolvelane.assistant import AssistantReply, respond
 from resolvelane.case_store import CaseStore, Receipt
-from resolvelane.domain.case import Case, CaseMessage, CaseStatus, Issue, MessageRole, ordered_issues
+from resolvelane.domain.case import (Case, CaseMessage, CaseStatus, CaseSummary, EarlierCase, Issue, MessageRole,
+                                     ordered_issues)
 from resolvelane.domain.delivery import Order
 from resolvelane.domain.knowledge import Citation
+from resolvelane.memory import SummaryQueue, earlier_cases, needs_summary, recent_messages
 from resolvelane.recognition import IssueRecognizer, Recognition
 from resolvelane.reply_agent import AgentDraft, AgentFailed, ReplyAgent, ReplyRequest
 from resolvelane.services.order_lookup import OrderLookupResult, OrderSource, lookup_order
@@ -165,12 +171,14 @@ def _plan(orders: OrderSource, customer_id: str, state: CaseState, recognition: 
 
 
 def _draft(agent: ReplyAgent | None, plan: ReplyPlan, customer_id: str, message: str,
-           history: Sequence[CaseMessage], state: CaseState, now: datetime) -> AgentDraft | None:
+           history: Sequence[CaseMessage], summary: CaseSummary | None, earlier: Sequence[EarlierCase],
+           state: CaseState, now: datetime) -> AgentDraft | None:
     if agent is None or plan.redirect:
         return None
-    request = ReplyRequest(customer_id, message, history, plan.order, plan.reply.issues,
+    request = ReplyRequest(customer_id, message, recent_messages(history, summary), plan.order, plan.reply.issues,
                            ordered_issues(list(state.issues) + plan.new_issues), state.status,
-                           plan.reply.needs_human_review, plan.reply.reply, now)
+                           plan.reply.needs_human_review, plan.reply.reply, now,
+                           summary.text if summary else None, earlier)
     try:
         return agent.draft(request)
     except AgentFailed as error:
@@ -197,23 +205,25 @@ def _commit(cases: CaseStore, case: Case, reply: AssistantReply, customer_id: st
 
 def handle_message(cases: CaseStore, orders: OrderSource, recognizer: IssueRecognizer,
                    customer_id: str, message: str, case_id: str | None = None, order_id: str | None = None,
-                   reply_agent: ReplyAgent | None = None, idempotency_key: str | None = None) -> ChatTurn:
+                   reply_agent: ReplyAgent | None = None, idempotency_key: str | None = None,
+                   summaries: SummaryQueue | None = None) -> ChatTurn:
     fingerprint = _fingerprint(message, case_id, order_id) if idempotency_key is not None else None
 
     # Phase 1: validate the request and copy what the reply needs, then release the lock.
-    state, history = NEW_CASE, []
+    state, history, summary = NEW_CASE, [], None
     with cases.lock:
         if (replayed := _replay(cases, customer_id, idempotency_key, fingerprint)) is not None:
             return replayed
         if case_id is not None:
             case = _owned_case(cases, customer_id, case_id)
             _check_order(case, order_id)
-            state, history = CaseState.of(case), list(case.messages)
+            state, history, summary = CaseState.of(case), list(case.messages), cases.summary(case_id)
+        earlier = earlier_cases(cases, customer_id, case_id, cases.clock())
 
     # Phase 2: slow work without the lock, so other customers' messages are not blocked.
     recognition = recognizer.recognize(message, history)
     plan = _plan(orders, customer_id, state, recognition, order_id)
-    draft = _draft(reply_agent, plan, customer_id, message, history, state, cases.clock())
+    draft = _draft(reply_agent, plan, customer_id, message, history, summary, earlier, state, cases.clock())
 
     # Phase 3: re-check and apply.
     with cases.lock:
@@ -265,4 +275,7 @@ def handle_message(cases: CaseStore, orders: OrderSource, recognizer: IssueRecog
                         case.status.value, ",".join(issue.value for issue in case.issues),
                         "rules" if plan.reply.needs_human_review else "agent")
 
-        return _commit(cases, case, reply, customer_id, idempotency_key, fingerprint)
+        turn = _commit(cases, case, reply, customer_id, idempotency_key, fingerprint)
+        if summaries is not None and needs_summary(len(case.messages), cases.summary(case.case_id)):
+            summaries.submit(case.case_id)
+        return turn

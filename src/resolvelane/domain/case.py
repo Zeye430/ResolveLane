@@ -56,3 +56,26 @@ class Case:
     messages: list[CaseMessage] = field(default_factory=list)
     # Why the assistant asked for a support agent, for whoever reviews the case. Internal only.
     review_notes: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class CaseSummary:
+    """A model-written summary of a case's older messages, so long conversations fit the prompt.
+
+    Derived data: it reports what was said, never replaces the messages, and is never shown to
+    the customer. Each new summary is a new version; the messages stay stored as they were.
+    """
+    text: str
+    covers: int  # the summary covers messages[:covers]
+    version: int
+    created_at: datetime
+
+
+@dataclass(frozen=True)
+class EarlierCase:
+    """Another case of the same customer, read from the case records."""
+    case_id: str
+    order_id: str | None
+    issues: tuple[Issue, ...]
+    status: CaseStatus
+    opened_at: datetime

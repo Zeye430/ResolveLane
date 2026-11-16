@@ -12,6 +12,7 @@ from resolvelane.access import Principal, Role, TokenRegistry, load_token_regist
 from resolvelane.case_store import CaseStore, load_case_store
 from resolvelane.knowledge import HelpCenter
 from resolvelane.llm import load_llm_provider
+from resolvelane.memory import load_summary_queue
 from resolvelane.recognition import IssueRecognizer, load_local_embedder, load_recognizer
 from resolvelane.reply_agent import ReplyAgent, load_reply_agent
 from resolvelane.schemas import CaseView, ChatRequest, ChatResponse, CitationView, CustomerOrderView, ErrorResponse
@@ -55,6 +56,8 @@ def create_app(token_registry: TokenRegistry | None = None, order_source: OrderS
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         yield
+        if app.state.summaries is not None:
+            app.state.summaries.close()
         if owned_store is not None:  # a store passed in belongs to the caller
             owned_store.close()
 
@@ -70,6 +73,9 @@ def create_app(token_registry: TokenRegistry | None = None, order_source: OrderS
                             else load_recognizer(llm=llm, local_embedder=local_embedder))
     app.state.reply_agent = (reply_agent if reply_agent is not None
                              else load_reply_agent(llm, POLICIES, HelpCenter(ARTICLES, local_embedder)))
+    # Summaries are only needed by the reply agent, and use the same provider.
+    app.state.summaries = (load_summary_queue(app.state.reply_agent.llm, app.state.case_store)
+                           if app.state.reply_agent is not None else None)
 
     @app.get("/health", response_model=HealthResponse, tags=["Health"])
     def health() -> HealthResponse:
@@ -126,7 +132,8 @@ def create_app(token_registry: TokenRegistry | None = None, order_source: OrderS
         try:
             turn = handle_message(request.app.state.case_store, request.app.state.order_source,
                                   request.app.state.recognizer, principal.subject_id, body.message,
-                                  body.case_id, body.order_id, request.app.state.reply_agent, idempotency_key)
+                                  body.case_id, body.order_id, request.app.state.reply_agent, idempotency_key,
+                                  request.app.state.summaries)
         except CaseNotFound:
             raise HTTPException(404, "Case not found") from None
         except OrderMismatch as error:

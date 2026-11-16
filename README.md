@@ -109,6 +109,16 @@ Search combines keyword ranking (BM25) with similarity from the local embedding 
 Replies name the help center sections they rely on; the chat response and the case record them with the article version (`citations`). A reply is replaced by the rule-based reply if it cites a passage that was not returned during that reply, or contains a number (a time, an amount, a number of days) that appears neither in the case facts nor in a cited passage. These checks catch invented citations and figures; they do not prove that every sentence is supported.
 
 
+### Conversation memory
+
+The reply agent sees three kinds of context, each limited to the customer's own data:
+
+- **Recent messages** of the case, word for word, up to twelve.
+- **A summary of older messages.** Once ten messages of a case are not covered by a summary, the language model folds all but the newest four into a new summary on a background thread, so no reply waits for it. Summaries are stored as numbered versions next to the messages, which are never removed or changed, and are not shown to the customer. The summary reports what was said, with customer statements written as claims; it never replaces case facts. If summaries fall behind, for example while the model is down, the agent sees only the newest twelve uncovered messages and the gap is logged.
+- **Earlier cases**: the customer's other cases from the last 90 days (up to five), read from the case records: order, issues, status and opening date. The agent uses them when the customer refers to an earlier report, and is instructed never to comment on how often a customer reports problems.
+
+No long-term customer profile (preferences extracted by a model) is kept yet. Without a language model, no summaries are written; replies are then built by rules, which use only the case facts.
+
 ## Order lookup
 
 `resolvelane.services.order_lookup.lookup_order` provides read-only access to an order only when the requester's customer ID matches the order owner. Lookups of another customer's order are classified internally as denied but presented to customers as not found, so order IDs cannot be probed.

@@ -8,7 +8,7 @@ import pytest
 
 from resolvelane.access import TokenRegistry
 from resolvelane.api import create_app
-from resolvelane.case_store import CaseStore, Receipt, load_case_store
+from resolvelane.case_store import MIGRATIONS, CaseStore, Receipt, load_case_store
 from resolvelane.domain.case import CaseMessage, CaseStatus, Issue, MessageRole
 from resolvelane.domain.knowledge import Citation
 from resolvelane.recognition import KeywordRecognizer, Recognition
@@ -86,7 +86,7 @@ def test_failed_commit_stores_neither_the_case_nor_the_receipt():
 def test_reopening_does_not_migrate_again(tmp_path):
     path = str(tmp_path / "cases.sqlite3")
     CaseStore(path).close()
-    assert CaseStore(path).schema_version == 1
+    assert CaseStore(path).schema_version == len(MIGRATIONS) == 2
 
 
 def test_database_from_a_newer_version_is_refused(tmp_path):

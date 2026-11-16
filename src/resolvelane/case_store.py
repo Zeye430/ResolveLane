@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from resolvelane.domain.case import Case, CaseMessage, CaseStatus, Issue, MessageRole
+from resolvelane.domain.case import Case, CaseMessage, CaseStatus, CaseSummary, EarlierCase, Issue, MessageRole
 from resolvelane.domain.knowledge import Citation
 
 logger = logging.getLogger("resolvelane.case_store")
@@ -61,6 +61,17 @@ MIGRATIONS: tuple[tuple[str, ...], ...] = (
             PRIMARY KEY (customer_id, idempotency_key)
         )""",
         "CREATE INDEX receipts_by_age ON receipts (created_at)",
+    ),
+    (
+        """CREATE TABLE case_summaries (
+            case_id TEXT NOT NULL REFERENCES cases (case_id),
+            version INTEGER NOT NULL,
+            covers INTEGER NOT NULL,
+            text TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (case_id, version)
+        )""",
+        "CREATE INDEX cases_by_customer ON cases (customer_id, created_at)",
     ),
 )
 
@@ -190,6 +201,40 @@ class CaseStore:
                            "VALUES (?, ?, ?, ?, ?)",
                            (receipt.customer_id, receipt.idempotency_key, receipt.fingerprint, receipt.response,
                             _timestamp(receipt.created_at)))
+
+    def earlier_cases(self, customer_id: str, since: datetime, limit: int,
+                      exclude_case_id: str | None = None) -> list[EarlierCase]:
+        """The customer's other cases opened since the given time, newest first."""
+        with self.lock:
+            rows = self._db.execute(
+                "SELECT case_id, order_id, issues, status, created_at FROM cases "
+                "WHERE customer_id = ? AND created_at >= ? AND case_id != ? ORDER BY created_at DESC LIMIT ?",
+                (customer_id, _timestamp(since), exclude_case_id or "", limit)).fetchall()
+        return [EarlierCase(row["case_id"], row["order_id"], tuple(Issue(value) for value in json.loads(row["issues"])),
+                            CaseStatus(row["status"]), datetime.fromisoformat(row["created_at"])) for row in rows]
+
+    # --- summaries ---------------------------------------------------------------
+
+    def summary(self, case_id: str) -> CaseSummary | None:
+        """The newest summary of the case."""
+        with self.lock:
+            row = self._db.execute("SELECT * FROM case_summaries WHERE case_id = ? ORDER BY version DESC LIMIT 1",
+                                   (case_id,)).fetchone()
+        if row is None:
+            return None
+        return CaseSummary(row["text"], row["covers"], row["version"], datetime.fromisoformat(row["created_at"]))
+
+    def save_summary(self, case_id: str, summary: CaseSummary) -> bool:
+        """Store a new summary version. False if that version already exists, which means another
+        summary was written meanwhile; the caller's summary is based on an older one and is dropped."""
+        try:
+            with self._transaction() as db:
+                db.execute("INSERT INTO case_summaries (case_id, version, covers, text, created_at) "
+                           "VALUES (?, ?, ?, ?, ?)",
+                           (case_id, summary.version, summary.covers, summary.text, _timestamp(summary.created_at)))
+        except sqlite3.IntegrityError:
+            return False
+        return True
 
     # --- receipts ----------------------------------------------------------------
 
