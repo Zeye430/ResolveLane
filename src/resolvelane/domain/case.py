@@ -1,6 +1,6 @@
 """Support case: one customer conversation about one order."""
 
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 
@@ -56,8 +56,3 @@ class Case:
     messages: list[CaseMessage] = field(default_factory=list)
     # Why the assistant asked for a support agent, for whoever reviews the case. Internal only.
     review_notes: list[str] = field(default_factory=list)
-
-    def snapshot(self) -> "Case":
-        """A copy that later updates to this case do not change."""
-        return replace(self, issues=list(self.issues), pending_issues=list(self.pending_issues),
-                       messages=list(self.messages), review_notes=list(self.review_notes))

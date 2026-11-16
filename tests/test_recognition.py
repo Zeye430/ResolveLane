@@ -10,7 +10,7 @@ import pytest
 
 from resolvelane.access import TokenRegistry
 from resolvelane.api import create_app
-from resolvelane.case_store import InMemoryCaseStore
+from resolvelane.case_store import CaseStore
 from resolvelane.domain.case import CaseMessage, Issue, MessageRole
 from resolvelane.embeddings import EmbeddingError
 from resolvelane.recognition import (DEFAULT_MODEL, SYSTEM_PROMPT, CascadeRecognizer, KeywordRecognizer, KeywordTier,
@@ -199,7 +199,7 @@ def chat(recognizer, message, order_id=None, case_id=None):
 
 @pytest.fixture(autouse=True)
 def fresh_store():
-    chat.store = InMemoryCaseStore()
+    chat.store = CaseStore()
 
 
 def test_order_named_in_the_message_is_used_and_bound():
@@ -243,12 +243,14 @@ def test_model_call_does_not_hold_the_case_lock():
 
 
 def test_case_bound_while_the_model_ran_is_still_checked():
-    cases = InMemoryCaseStore()
+    cases = CaseStore()
     orders = InMemoryOrderSource(ORDERS)
-    case_id = handle_message(cases, orders, KeywordRecognizer(), "demo-customer-101", "Hello").case.case_id
+    case_id = handle_message(cases, orders, KeywordRecognizer(), "demo-customer-101", "Hello").case_id
 
     def bind_meanwhile():
-        cases.get(case_id).order_id = "demo-order-1003"
+        case = cases.get(case_id)
+        case.order_id = "demo-order-1003"
+        cases.commit(case)
 
     from resolvelane.services.support_chat import OrderMismatch
     with pytest.raises(OrderMismatch):

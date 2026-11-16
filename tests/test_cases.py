@@ -7,7 +7,7 @@ import pytest
 
 from resolvelane.access import TokenRegistry
 from resolvelane.api import create_app
-from resolvelane.case_store import InMemoryCaseStore
+from resolvelane.case_store import CaseStore
 from resolvelane.recognition import KeywordRecognizer
 from resolvelane.services.support_chat import handle_message
 from resolvelane.simulator.fixtures import ORDERS
@@ -155,10 +155,10 @@ def test_lookup_outcome_and_review_are_logged(api, caplog):
 
 
 def test_concurrent_messages_to_one_case_are_all_kept():
-    cases = InMemoryCaseStore()
+    cases = CaseStore()
     orders = InMemoryOrderSource(ORDERS)
     case_id = handle_message(cases, orders, KeywordRecognizer(), "demo-customer-101", "Where is my order?",
-                             None, "demo-order-1001").case.case_id
+                             None, "demo-order-1001").case_id
 
     def send(n):
         handle_message(cases, orders, KeywordRecognizer(), "demo-customer-101", f"Message {n}", case_id)

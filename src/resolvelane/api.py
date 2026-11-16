@@ -1,20 +1,23 @@
 """HTTP application entry point."""
 
 import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, HTTPException, Path, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Path, Request, Response
 from pydantic import BaseModel
 
 from resolvelane.access import Principal, Role, TokenRegistry, load_token_registry
-from resolvelane.case_store import InMemoryCaseStore
+from resolvelane.case_store import CaseStore, load_case_store
 from resolvelane.knowledge import HelpCenter
 from resolvelane.llm import load_llm_provider
 from resolvelane.recognition import IssueRecognizer, load_local_embedder, load_recognizer
 from resolvelane.reply_agent import ReplyAgent, load_reply_agent
 from resolvelane.schemas import CaseView, ChatRequest, ChatResponse, CitationView, CustomerOrderView, ErrorResponse
 from resolvelane.services.order_lookup import OrderAccess, OrderSource, lookup_order
-from resolvelane.services.support_chat import CaseNotFound, OrderMismatch, get_case, handle_message
+from resolvelane.services.support_chat import (CaseNotFound, IdempotencyKeyReused, OrderMismatch, get_case,
+                                               handle_message)
 from resolvelane.simulator.fixtures import ORDERS, POLICIES
 from resolvelane.simulator.help_center import ARTICLES
 from resolvelane.simulator.order_source import InMemoryOrderSource
@@ -45,12 +48,20 @@ def require_customer(principal: Annotated[Principal, Depends(require_principal)]
 
 
 def create_app(token_registry: TokenRegistry | None = None, order_source: OrderSource | None = None,
-               case_store: InMemoryCaseStore | None = None, recognizer: IssueRecognizer | None = None,
+               case_store: CaseStore | None = None, recognizer: IssueRecognizer | None = None,
                reply_agent: ReplyAgent | None = None) -> FastAPI:
-    app = FastAPI(title="ResolveLane API", version="0.1.0")
+    owned_store = load_case_store() if case_store is None else None
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        yield
+        if owned_store is not None:  # a store passed in belongs to the caller
+            owned_store.close()
+
+    app = FastAPI(title="ResolveLane API", version="0.1.0", lifespan=lifespan)
     app.state.token_registry = token_registry if token_registry is not None else load_token_registry()
     app.state.order_source = order_source if order_source is not None else InMemoryOrderSource(ORDERS)
-    app.state.case_store = case_store if case_store is not None else InMemoryCaseStore()
+    app.state.case_store = case_store if case_store is not None else owned_store
     # Recognition and reply writing share one provider, so they share its circuit breaker too.
     # Recognition and help center search share the local embedding model, loaded once.
     llm = load_llm_provider() if recognizer is None or reply_agent is None else None
@@ -98,6 +109,7 @@ def create_app(token_registry: TokenRegistry | None = None, order_source: OrderS
             403: {"model": ErrorResponse},
             404: {"model": ErrorResponse, "description": "The case does not exist or belongs to another customer"},
             409: {"model": ErrorResponse, "description": "The case is about a different order"},
+            422: {"description": "Invalid request, or an Idempotency-Key already used for a different request"},
             503: {"model": ErrorResponse},
         },
     )
@@ -105,17 +117,26 @@ def create_app(token_registry: TokenRegistry | None = None, order_source: OrderS
         body: ChatRequest,
         principal: Annotated[Principal, Depends(require_customer)],
         request: Request,
+        response: Response,
+        idempotency_key: Annotated[str | None, Header(
+            alias="Idempotency-Key", min_length=1, max_length=128, pattern=r"^[\x21-\x7e]+$",
+            description="A unique value per message, such as a UUID. Retrying with the same key and body "
+                        "returns the original response instead of sending the message again.")] = None,
     ) -> ChatResponse:
         try:
             turn = handle_message(request.app.state.case_store, request.app.state.order_source,
                                   request.app.state.recognizer, principal.subject_id, body.message,
-                                  body.case_id, body.order_id, request.app.state.reply_agent)
+                                  body.case_id, body.order_id, request.app.state.reply_agent, idempotency_key)
         except CaseNotFound:
             raise HTTPException(404, "Case not found") from None
         except OrderMismatch as error:
             raise HTTPException(409, str(error)) from None
-        return ChatResponse(case_id=turn.case.case_id, case_status=turn.case.status, reply=turn.reply.reply,
-                            issues=turn.reply.issues, order_id=turn.case.order_id,
+        except IdempotencyKeyReused:
+            raise HTTPException(422, "This Idempotency-Key was already used for a different request") from None
+        if turn.replayed:
+            response.headers["Idempotent-Replayed"] = "true"
+        return ChatResponse(case_id=turn.case_id, case_status=turn.case_status, reply=turn.reply.reply,
+                            issues=turn.reply.issues, order_id=turn.order_id,
                             needs_human_review=turn.reply.needs_human_review,
                             citations=[CitationView.model_validate(citation) for citation in turn.reply.citations])
 

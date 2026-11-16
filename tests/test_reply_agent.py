@@ -11,7 +11,7 @@ import pytest
 
 from resolvelane.access import TokenRegistry
 from resolvelane.api import create_app
-from resolvelane.case_store import InMemoryCaseStore
+from resolvelane.case_store import CaseStore
 from resolvelane.domain.case import CaseStatus, Issue
 from resolvelane.llm import LLMProvider
 from resolvelane.recognition import KeywordRecognizer, load_recognizer
@@ -279,7 +279,7 @@ class Api:
     def __init__(self, reply_agent=None, recognizer=None):
         self.app = create_app(token_registry=TokenRegistry({TOKEN: {"subject_id": "demo-customer-101",
                                                                      "role": "customer"}}),
-                              case_store=InMemoryCaseStore(clock=lambda: NOW),
+                              case_store=CaseStore(clock=lambda: NOW),
                               recognizer=recognizer or KeywordRecognizer(), reply_agent=reply_agent)
         self.store = self.app.state.case_store
 
@@ -401,7 +401,9 @@ def test_case_changed_while_the_agent_wrote_gets_the_rule_based_reply():
     first = api.chat("Where is my order?", "demo-order-1001")
 
     def another_message_moved_the_case_to_review():
-        api.store.get(first["case_id"]).status = CaseStatus.NEEDS_REVIEW
+        case = api.store.get(first["case_id"])
+        case.status = CaseStatus.NEEDS_REVIEW
+        api.store.commit(case)
 
     api.app.state.reply_agent = StubAgent(another_message_moved_the_case_to_review)
     turn = api.chat("Where is my order?", case_id=first["case_id"])

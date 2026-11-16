@@ -8,17 +8,25 @@ A message is handled in three phases so that slow model calls never hold the cas
 3. Under the lock again: re-check the case, then record the messages and apply decisions.
    If another message changed the case meanwhile, the reply is decided again from the
    current case and the rule-based reply is sent, because the draft was based on old facts.
+
+A message sent with an idempotency key leaves a receipt, committed together with the case.
+A retry with the same key and body gets the stored response instead of being handled again,
+so a client that lost a response can safely send the message again. The receipt is checked
+in phase 1 and again in phase 3, in case a duplicate of the request finished meanwhile.
 """
 
+import hashlib
+import json
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime
 
 from resolvelane.assistant import AssistantReply, respond
-from resolvelane.case_store import InMemoryCaseStore
+from resolvelane.case_store import CaseStore, Receipt
 from resolvelane.domain.case import Case, CaseMessage, CaseStatus, Issue, MessageRole, ordered_issues
 from resolvelane.domain.delivery import Order
+from resolvelane.domain.knowledge import Citation
 from resolvelane.recognition import IssueRecognizer, Recognition
 from resolvelane.reply_agent import AgentDraft, AgentFailed, ReplyAgent, ReplyRequest
 from resolvelane.services.order_lookup import OrderLookupResult, OrderSource, lookup_order
@@ -35,10 +43,36 @@ class OrderMismatch(Exception):
         super().__init__(f"This case is about order {case_order_id}. Start a new case for another order.")
 
 
+class IdempotencyKeyReused(Exception):
+    """The idempotency key was already used for a request with a different body."""
+
+
 @dataclass(frozen=True)
 class ChatTurn:
-    case: Case
+    """The response to one message, as it was when the message was handled."""
+    case_id: str
+    case_status: CaseStatus
+    order_id: str | None
     reply: AssistantReply
+    replayed: bool = False  # answered from the receipt of an earlier identical request
+
+    @classmethod
+    def of(cls, case: Case, reply: AssistantReply) -> "ChatTurn":
+        return cls(case.case_id, case.status, case.order_id, reply)
+
+    def to_json(self) -> str:
+        return json.dumps({
+            "case_id": self.case_id, "case_status": self.case_status.value, "order_id": self.order_id,
+            "reply": self.reply.reply, "issues": [issue.value for issue in self.reply.issues],
+            "needs_human_review": self.reply.needs_human_review,
+            "citations": [vars(citation) for citation in self.reply.citations]})
+
+    @classmethod
+    def from_json(cls, text: str) -> "ChatTurn":
+        data = json.loads(text)
+        reply = AssistantReply(data["reply"], [Issue(value) for value in data["issues"]], data["needs_human_review"],
+                               tuple(Citation(**citation) for citation in data["citations"]))
+        return cls(data["case_id"], CaseStatus(data["case_status"]), data["order_id"], reply)
 
 
 @dataclass(frozen=True)
@@ -67,16 +101,34 @@ class ReplyPlan:
     redirect: bool = False               # the message names a different order than the case's
 
 
-def _owned_case(cases: InMemoryCaseStore, customer_id: str, case_id: str) -> Case:
+def _owned_case(cases: CaseStore, customer_id: str, case_id: str) -> Case:
     case = cases.get(case_id)
     if case is None or case.customer_id != customer_id:
         raise CaseNotFound
     return case
 
 
-def get_case(cases: InMemoryCaseStore, customer_id: str, case_id: str) -> Case:
-    with cases.lock:
-        return _owned_case(cases, customer_id, case_id).snapshot()
+def get_case(cases: CaseStore, customer_id: str, case_id: str) -> Case:
+    return _owned_case(cases, customer_id, case_id)
+
+
+def _fingerprint(message: str, case_id: str | None, order_id: str | None) -> str:
+    body = json.dumps({"message": message, "case_id": case_id, "order_id": order_id}, sort_keys=True)
+    return hashlib.sha256(body.encode()).hexdigest()
+
+
+def _replay(cases: CaseStore, customer_id: str, key: str | None, fingerprint: str | None) -> ChatTurn | None:
+    """The stored response to an earlier request with this key, if there is one."""
+    if key is None:
+        return None
+    receipt = cases.receipt(customer_id, key)
+    if receipt is None:
+        return None
+    if receipt.fingerprint != fingerprint:
+        raise IdempotencyKeyReused
+    turn = replace(ChatTurn.from_json(receipt.response), replayed=True)
+    logger.info("idempotent_replay case=%s subject=%s", turn.case_id, customer_id)
+    return turn
 
 
 def _check_order(case: Case, order_id: str | None) -> None:
@@ -128,19 +180,32 @@ def _draft(agent: ReplyAgent | None, plan: ReplyPlan, customer_id: str, message:
     return None
 
 
-def _record(cases: InMemoryCaseStore, case: Case, message: str, reply: AssistantReply) -> None:
+def _record(cases: CaseStore, case: Case, message: str, reply: AssistantReply) -> None:
     now = cases.clock()
     case.messages.append(CaseMessage(MessageRole.CUSTOMER, message, now))
     case.messages.append(CaseMessage(MessageRole.ASSISTANT, reply.reply, now, reply.citations))
 
 
-def handle_message(cases: InMemoryCaseStore, orders: OrderSource, recognizer: IssueRecognizer,
+def _commit(cases: CaseStore, case: Case, reply: AssistantReply, customer_id: str, key: str | None,
+            fingerprint: str | None) -> ChatTurn:
+    turn = ChatTurn.of(case, reply)
+    receipt = (Receipt(customer_id, key, fingerprint, turn.to_json(), cases.clock())
+               if key is not None and fingerprint is not None else None)
+    cases.commit(case, receipt)
+    return turn
+
+
+def handle_message(cases: CaseStore, orders: OrderSource, recognizer: IssueRecognizer,
                    customer_id: str, message: str, case_id: str | None = None, order_id: str | None = None,
-                   reply_agent: ReplyAgent | None = None) -> ChatTurn:
+                   reply_agent: ReplyAgent | None = None, idempotency_key: str | None = None) -> ChatTurn:
+    fingerprint = _fingerprint(message, case_id, order_id) if idempotency_key is not None else None
+
     # Phase 1: validate the request and copy what the reply needs, then release the lock.
     state, history = NEW_CASE, []
-    if case_id is not None:
-        with cases.lock:
+    with cases.lock:
+        if (replayed := _replay(cases, customer_id, idempotency_key, fingerprint)) is not None:
+            return replayed
+        if case_id is not None:
             case = _owned_case(cases, customer_id, case_id)
             _check_order(case, order_id)
             state, history = CaseState.of(case), list(case.messages)
@@ -152,8 +217,10 @@ def handle_message(cases: InMemoryCaseStore, orders: OrderSource, recognizer: Is
 
     # Phase 3: re-check and apply.
     with cases.lock:
+        if (replayed := _replay(cases, customer_id, idempotency_key, fingerprint)) is not None:
+            return replayed  # a duplicate of this request finished first
         if case_id is None:
-            case = cases.create(customer_id)
+            case = cases.new_case(customer_id)
         else:
             case = _owned_case(cases, customer_id, case_id)
             _check_order(case, order_id)  # the case may have been bound meanwhile
@@ -169,7 +236,7 @@ def handle_message(cases: InMemoryCaseStore, orders: OrderSource, recognizer: Is
                         plan.lookup.access.value, customer_id, plan.looked_up_order_id)
         if plan.redirect:
             _record(cases, case, message, plan.reply)
-            return ChatTurn(case.snapshot(), plan.reply)
+            return _commit(cases, case, plan.reply, customer_id, idempotency_key, fingerprint)
 
         review_request = draft.review_request if draft else None
         reply = AssistantReply(draft.reply if draft else plan.reply.reply, plan.reply.issues,
@@ -198,4 +265,4 @@ def handle_message(cases: InMemoryCaseStore, orders: OrderSource, recognizer: Is
                         case.status.value, ",".join(issue.value for issue in case.issues),
                         "rules" if plan.reply.needs_human_review else "agent")
 
-        return ChatTurn(case.snapshot(), reply)
+        return _commit(cases, case, reply, customer_id, idempotency_key, fingerprint)

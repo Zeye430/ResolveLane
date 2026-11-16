@@ -12,6 +12,8 @@ PROVIDER_SETTINGS = ("ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "ANTHROPIC_MODEL
 for _name in PROVIDER_SETTINGS:
     os.environ.pop(_name, None)
 os.environ["RESOLVELANE_LOCAL_EMBEDDING_MODEL"] = "off"
+# Applications built without an explicit case store keep cases in memory, never in a file.
+os.environ["RESOLVELANE_DATABASE"] = ":memory:"
 
 
 @pytest.fixture(autouse=True)
@@ -20,3 +22,4 @@ def offline_recognition(monkeypatch):
     for name in PROVIDER_SETTINGS:
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("RESOLVELANE_LOCAL_EMBEDDING_MODEL", "off")
+    monkeypatch.setenv("RESOLVELANE_DATABASE", ":memory:")
