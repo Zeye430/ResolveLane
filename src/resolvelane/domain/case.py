@@ -25,12 +25,14 @@ def ordered_issues(issues) -> list[Issue]:
 
 class CaseStatus(str, Enum):
     OPEN = "open"
-    NEEDS_REVIEW = "needs_review"
+    NEEDS_REVIEW = "needs_review"  # waiting in the support agents' queue
+    RESOLVED = "resolved"          # a support agent closed it; a new customer message reopens it
 
 
 class MessageRole(str, Enum):
     CUSTOMER = "customer"
     ASSISTANT = "assistant"
+    SUPPORT_AGENT = "support_agent"
 
 
 @dataclass(frozen=True)
@@ -40,6 +42,19 @@ class CaseMessage:
     sent_at: datetime
     # For assistant messages: the exact help center versions the reply relied on.
     citations: tuple[Citation, ...] = ()
+    # For support agent messages: who wrote it. Internal; customers see only the role.
+    author_id: str | None = None
+
+
+@dataclass(frozen=True)
+class CaseTransition:
+    """One status change, kept as an audit record."""
+    at: datetime
+    from_status: CaseStatus
+    to_status: CaseStatus
+    actor_role: str        # assistant, customer or support_agent
+    actor_id: str | None   # the support agent or customer; None for the assistant
+    note: str = ""
 
 
 @dataclass
@@ -56,6 +71,19 @@ class Case:
     messages: list[CaseMessage] = field(default_factory=list)
     # Why the assistant asked for a support agent, for whoever reviews the case. Internal only.
     review_notes: list[str] = field(default_factory=list)
+    status_changed_at: datetime | None = None  # None until the first change: since creation
+    transitions: list[CaseTransition] = field(default_factory=list)
+
+    @property
+    def waiting_since(self) -> datetime:
+        return self.status_changed_at or self.created_at
+
+    def move_to(self, status: CaseStatus, at: datetime, actor_role: str, actor_id: str | None,
+                note: str = "") -> None:
+        if status is self.status:
+            return
+        self.transitions.append(CaseTransition(at, self.status, status, actor_role, actor_id, note))
+        self.status, self.status_changed_at = status, at
 
 
 @dataclass(frozen=True)

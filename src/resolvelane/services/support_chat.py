@@ -165,7 +165,10 @@ def _plan(orders: OrderSource, customer_id: str, state: CaseState, recognition: 
                                "to review it. You'll see their reply in this conversation.", to_answer, False)
     else:
         reply = respond(to_answer, effective_order_id, order)
-        if in_review and not reply.needs_human_review:
+        if state.status is CaseStatus.RESOLVED:
+            reply = replace(reply, needs_human_review=True,
+                            reply=reply.reply + " I've reopened your case so a support agent can look at your message.")
+        elif in_review and not reply.needs_human_review:
             reply = replace(reply, reply=reply.reply + " Your case is waiting for a support agent to review it.")
     return ReplyPlan(reply, order, new_issues, lookup, effective_order_id)
 
@@ -238,6 +241,11 @@ def handle_message(cases: CaseStore, orders: OrderSource, recognizer: IssueRecog
         if current != state:
             logger.info("case_changed_during_reply case=%s; deciding the reply again", case.case_id)
             plan, draft = _plan(orders, customer_id, current, recognition, order_id), None
+        if case.status is CaseStatus.RESOLVED:
+            # A support agent made the last decision, so they see the follow-up.
+            case.move_to(CaseStatus.NEEDS_REVIEW, cases.clock(), "customer", customer_id,
+                         "The customer wrote again after the case was resolved")
+            logger.info("case_status case=%s status=needs_review reopened_by=customer", case.case_id)
 
         logger.info("issue_recognition case=%s source=%s issues=%s", case.case_id, recognition.source,
                     ",".join(issue.value for issue in recognition.issues))
@@ -272,7 +280,9 @@ def handle_message(cases: CaseStore, orders: OrderSource, recognizer: IssueRecog
         if review_request is not None:
             case.review_notes.append(review_request.reason)
         if reply.needs_human_review and case.status is not CaseStatus.NEEDS_REVIEW:
-            case.status = CaseStatus.NEEDS_REVIEW
+            reason = (f"Rules: {', '.join(issue.value for issue in plan.reply.issues)} needs a support agent"
+                      if plan.reply.needs_human_review else f"Assistant: {review_request.reason}")
+            case.move_to(CaseStatus.NEEDS_REVIEW, cases.clock(), "assistant", None, reason)
             logger.info("case_status case=%s status=%s issues=%s requested_by=%s", case.case_id,
                         case.status.value, ",".join(issue.value for issue in case.issues),
                         "rules" if plan.reply.needs_human_review else "agent")

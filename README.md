@@ -44,7 +44,19 @@ curl -X POST http://127.0.0.1:8000/api/v1/chat \
 
 Each conversation is a case. The first message returns a `case_id`; sending it with later messages continues the case. A case remembers its order, so follow-ups need not repeat the order ID, and an issue raised before the order ID is known is answered once it arrives. A case is bound only to an order the customer may access and cannot switch to another order (`409`). Another customer's case returns `404`, the same as an unknown case. `GET /api/v1/cases/{case_id}` returns the case with its messages.
 
-Late deliveries, delivered-item reports and cancellations without a recorded reason move the case to `needs_review`. No support agent workflow exists yet to pick it up, and no refund is issued.
+Late deliveries, delivered-item reports and cancellations without a recorded reason move the case to `needs_review`, as does the assistant when a customer asks for a person; support agents pick it up from their queue (below). No refund is issued.
+
+### Support desk
+
+Support agents (principals with the `support_agent` role) work through cases in review:
+
+- `GET /api/v1/support/cases?status=needs_review` lists cases longest waiting first, a page at a time (`limit`, and `cursor` from the previous page's `next_cursor`).
+- `GET /api/v1/support/cases/{case_id}` shows everything about a case, including what customers do not see: the customer ID, the assistant's review notes, the conversation summary, who wrote each message, and every status change with who made it and why.
+- `POST /api/v1/support/cases/{case_id}/messages` sends the customer a message as a support agent. Customers see it with the role `support_agent` but not the agent's ID. The assistant sees it in the conversation and does not contradict it.
+- `POST /api/v1/support/cases/{case_id}/resolution` resolves the case with an internal note.
+
+Both actions accept an `Idempotency-Key` header, like customer messages. A resolved case takes no further agent replies (`409`). When the customer writes again, the case goes back to the queue, joining at the end, because a support agent made the last decision; the assistant tells the customer it has been reopened. Customer endpoints refuse support agents and the desk refuses customers (`403`). Cases are not yet assigned to a particular agent, so two agents can open the same case.
+
 
 ### Storage and retries
 

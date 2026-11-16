@@ -6,7 +6,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Path, Request, Response
+from fastapi import Depends, FastAPI, Header, HTTPException, Path, Query, Request, Response
 from pydantic import BaseModel
 
 from resolvelane.access import Principal, Role, TokenRegistry, load_token_registry
@@ -16,7 +16,11 @@ from resolvelane.llm import load_llm_provider
 from resolvelane.memory import load_summary_queue
 from resolvelane.recognition import IssueRecognizer, load_local_embedder, load_recognizer
 from resolvelane.reply_agent import ReplyAgent, load_reply_agent
-from resolvelane.schemas import CaseView, ChatRequest, ChatResponse, CitationView, CustomerOrderView, ErrorResponse
+from resolvelane.domain.case import CaseStatus
+from resolvelane.schemas import (CaseView, ChatRequest, ChatResponse, CitationView, CustomerOrderView, ErrorResponse,
+                                 QueuePageView, ResolveRequest, SupportActionResponse, SupportCaseView,
+                                 SupportReplyRequest)
+from resolvelane.services import support_desk
 from resolvelane.services.order_lookup import OrderAccess, OrderSource, lookup_order
 from resolvelane.services.support_chat import (CaseNotFound, IdempotencyKeyReused, OrderMismatch, get_case,
                                                handle_message)
@@ -51,6 +55,18 @@ def require_customer(principal: Annotated[Principal, Depends(require_principal)]
     return principal
 
 
+def require_support_agent(principal: Annotated[Principal, Depends(require_principal)]) -> Principal:
+    if principal.role is not Role.SUPPORT_AGENT:
+        raise HTTPException(403, "This endpoint is available to support agents only")
+    return principal
+
+
+IdempotencyKey = Annotated[str | None, Header(
+    alias="Idempotency-Key", min_length=1, max_length=128, pattern=r"^[\x21-\x7e]+$",
+    description="A unique value per request, such as a UUID. Retrying with the same key and body "
+                "returns the original response instead of applying the request again.")]
+
+
 def create_app(token_registry: TokenRegistry | None = None, order_source: OrderSource | None = None,
                case_store: CaseStore | None = None, recognizer: IssueRecognizer | None = None,
                reply_agent: ReplyAgent | None = None) -> FastAPI:
@@ -82,8 +98,7 @@ def create_app(token_registry: TokenRegistry | None = None, order_source: OrderS
                              else load_reply_agent(llm, POLICIES, HelpCenter(ARTICLES, local_embedder),
                                                    load_skills(), ToolGateway(external=app.state.mcp)))
     # Summaries are only needed by the reply agent, and use the same provider.
-    app.state.summaries = (load_summary_queue(app.state.reply_agent.llm, app.state.case_store)
-                           if app.state.reply_agent is not None else None)
+    app.state.summaries = load_summary_queue(getattr(app.state.reply_agent, "llm", None), app.state.case_store)
 
     @app.get("/health", response_model=HealthResponse, tags=["Health"])
     def health() -> HealthResponse:
@@ -132,10 +147,7 @@ def create_app(token_registry: TokenRegistry | None = None, order_source: OrderS
         principal: Annotated[Principal, Depends(require_customer)],
         request: Request,
         response: Response,
-        idempotency_key: Annotated[str | None, Header(
-            alias="Idempotency-Key", min_length=1, max_length=128, pattern=r"^[\x21-\x7e]+$",
-            description="A unique value per message, such as a UUID. Retrying with the same key and body "
-                        "returns the original response instead of sending the message again.")] = None,
+        idempotency_key: IdempotencyKey = None,
     ) -> ChatResponse:
         try:
             turn = handle_message(request.app.state.case_store, request.app.state.order_source,
@@ -173,6 +185,82 @@ def create_app(token_registry: TokenRegistry | None = None, order_source: OrderS
         except CaseNotFound:
             raise HTTPException(404, "Case not found") from None
         return CaseView.model_validate(case)
+
+    # --- support desk ------------------------------------------------------------------
+
+    agent_errors = {401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}, 503: {"model": ErrorResponse}}
+
+    @app.get("/api/v1/support/cases", response_model=QueuePageView, tags=["Support desk"],
+             summary="List cases in a status, longest waiting first", responses=agent_errors)
+    def support_queue(
+        principal: Annotated[Principal, Depends(require_support_agent)],
+        request: Request,
+        status: CaseStatus = CaseStatus.NEEDS_REVIEW,
+        limit: Annotated[int, Query(ge=1, le=support_desk.MAX_PAGE)] = 20,
+        cursor: Annotated[str | None, Query(max_length=512)] = None,
+    ) -> QueuePageView:
+        try:
+            page = support_desk.queue(request.app.state.case_store, status, limit, cursor)
+        except support_desk.InvalidCursor:
+            raise HTTPException(400, "Invalid cursor") from None
+        return QueuePageView(cases=page.entries, next_cursor=page.next_cursor)
+
+    @app.get("/api/v1/support/cases/{case_id}", response_model=SupportCaseView, tags=["Support desk"],
+             summary="Read a case with its internal details",
+             responses={**agent_errors, 404: {"model": ErrorResponse}})
+    def support_case(
+        case_id: Annotated[str, Path(min_length=1, max_length=64)],
+        principal: Annotated[Principal, Depends(require_support_agent)],
+        request: Request,
+    ) -> SupportCaseView:
+        try:
+            case, summary = support_desk.read_case(request.app.state.case_store, case_id)
+        except support_desk.CaseNotFound:
+            raise HTTPException(404, "Case not found") from None
+        return SupportCaseView.model_validate({**vars(case), "waiting_since": case.waiting_since,
+                                               "summary": summary.text if summary else None})
+
+    def _desk_action(action, request: Request, response: Response, *args) -> SupportActionResponse:
+        try:
+            result = action(request.app.state.case_store, *args)
+        except support_desk.CaseNotFound:
+            raise HTTPException(404, "Case not found") from None
+        except support_desk.CaseResolved:
+            raise HTTPException(409, "This case is resolved") from None
+        except support_desk.IdempotencyKeyReused:
+            raise HTTPException(422, "This Idempotency-Key was already used for a different request") from None
+        if result.replayed:
+            response.headers["Idempotent-Replayed"] = "true"
+        return SupportActionResponse(case_id=result.case_id, status=result.status, message_count=result.message_count)
+
+    action_errors = {**agent_errors, 404: {"model": ErrorResponse},
+                     409: {"model": ErrorResponse, "description": "The case is resolved"}}
+
+    @app.post("/api/v1/support/cases/{case_id}/messages", response_model=SupportActionResponse,
+              tags=["Support desk"], summary="Reply to the customer as a support agent", responses=action_errors)
+    def support_reply(
+        case_id: Annotated[str, Path(min_length=1, max_length=64)],
+        body: SupportReplyRequest,
+        principal: Annotated[Principal, Depends(require_support_agent)],
+        request: Request,
+        response: Response,
+        idempotency_key: IdempotencyKey = None,
+    ) -> SupportActionResponse:
+        return _desk_action(support_desk.reply, request, response, principal.subject_id, case_id, body.text,
+                            idempotency_key)
+
+    @app.post("/api/v1/support/cases/{case_id}/resolution", response_model=SupportActionResponse,
+              tags=["Support desk"], summary="Resolve the case", responses=action_errors)
+    def support_resolve(
+        case_id: Annotated[str, Path(min_length=1, max_length=64)],
+        body: ResolveRequest,
+        principal: Annotated[Principal, Depends(require_support_agent)],
+        request: Request,
+        response: Response,
+        idempotency_key: IdempotencyKey = None,
+    ) -> SupportActionResponse:
+        return _desk_action(support_desk.resolve, request, response, principal.subject_id, case_id, body.note,
+                            idempotency_key)
 
     return app
 

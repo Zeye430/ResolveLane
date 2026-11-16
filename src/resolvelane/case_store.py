@@ -21,7 +21,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from resolvelane.domain.case import Case, CaseMessage, CaseStatus, CaseSummary, EarlierCase, Issue, MessageRole
+from resolvelane.domain.case import (Case, CaseMessage, CaseStatus, CaseSummary, CaseTransition, EarlierCase, Issue,
+                                     MessageRole)
 from resolvelane.domain.knowledge import Citation
 
 logger = logging.getLogger("resolvelane.case_store")
@@ -73,6 +74,23 @@ MIGRATIONS: tuple[tuple[str, ...], ...] = (
         )""",
         "CREATE INDEX cases_by_customer ON cases (customer_id, created_at)",
     ),
+    (
+        "ALTER TABLE case_messages ADD COLUMN author_id TEXT",
+        "ALTER TABLE cases ADD COLUMN status_changed_at TEXT",
+        "UPDATE cases SET status_changed_at = created_at",
+        """CREATE TABLE case_transitions (
+            case_id TEXT NOT NULL REFERENCES cases (case_id),
+            seq INTEGER NOT NULL,
+            at TEXT NOT NULL,
+            from_status TEXT NOT NULL,
+            to_status TEXT NOT NULL,
+            actor_role TEXT NOT NULL,
+            actor_id TEXT,
+            note TEXT NOT NULL,
+            PRIMARY KEY (case_id, seq)
+        )""",
+        "CREATE INDEX cases_by_status ON cases (status, status_changed_at, case_id)",
+    ),
 )
 
 
@@ -93,6 +111,19 @@ class Receipt:
     fingerprint: str  # identifies the request body, so a reused key with another body is caught
     response: str     # JSON, written and read by the support chat service
     created_at: datetime
+
+
+@dataclass(frozen=True)
+class QueueEntry:
+    case_id: str
+    customer_id: str
+    order_id: str | None
+    status: CaseStatus
+    issues: tuple[Issue, ...]
+    review_notes: tuple[str, ...]
+    waiting_since: datetime
+    position: str  # the stored timestamp, for the next page's cursor
+    message_count: int
 
 
 class CaseStore:
@@ -149,7 +180,9 @@ class CaseStore:
 
     def new_case(self, customer_id: str) -> Case:
         """A new case, stored by the first commit."""
-        return Case(case_id=f"case-{uuid.uuid4().hex}", customer_id=customer_id, created_at=self.clock())
+        now = self.clock()
+        return Case(case_id=f"case-{uuid.uuid4().hex}", customer_id=customer_id, created_at=now,
+                    status_changed_at=now)
 
     def get(self, case_id: str) -> Case | None:
         """A copy of the stored case; changes to it are kept only by commit."""
@@ -159,6 +192,8 @@ class CaseStore:
                 return None
             messages = self._db.execute("SELECT * FROM case_messages WHERE case_id = ? ORDER BY seq",
                                         (case_id,)).fetchall()
+            transitions = self._db.execute("SELECT * FROM case_transitions WHERE case_id = ? ORDER BY seq",
+                                           (case_id,)).fetchall()
         return Case(
             case_id=row["case_id"], customer_id=row["customer_id"],
             created_at=datetime.fromisoformat(row["created_at"]), order_id=row["order_id"],
@@ -166,9 +201,14 @@ class CaseStore:
             pending_issues=[Issue(value) for value in json.loads(row["pending_issues"])],
             messages=[CaseMessage(MessageRole(message["role"]), message["text"],
                                   datetime.fromisoformat(message["sent_at"]),
-                                  tuple(Citation(**citation) for citation in json.loads(message["citations"])))
+                                  tuple(Citation(**citation) for citation in json.loads(message["citations"])),
+                                  message["author_id"])
                       for message in messages],
             review_notes=json.loads(row["review_notes"]),
+            status_changed_at=datetime.fromisoformat(row["status_changed_at"]),
+            transitions=[CaseTransition(datetime.fromisoformat(item["at"]), CaseStatus(item["from_status"]),
+                                        CaseStatus(item["to_status"]), item["actor_role"], item["actor_id"],
+                                        item["note"]) for item in transitions],
         )
 
     def commit(self, case: Case, receipt: Receipt | None = None) -> None:
@@ -179,21 +219,31 @@ class CaseStore:
         with self._transaction() as db:
             db.execute(
                 """INSERT INTO cases (case_id, customer_id, created_at, order_id, status, issues,
-                                      pending_issues, review_notes)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                                      pending_issues, review_notes, status_changed_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                    ON CONFLICT (case_id) DO UPDATE SET order_id = excluded.order_id, status = excluded.status,
                        issues = excluded.issues, pending_issues = excluded.pending_issues,
-                       review_notes = excluded.review_notes""",
+                       review_notes = excluded.review_notes, status_changed_at = excluded.status_changed_at""",
                 (case.case_id, case.customer_id, _timestamp(case.created_at), case.order_id, case.status.value,
                  json.dumps([issue.value for issue in case.issues]),
-                 json.dumps([issue.value for issue in case.pending_issues]), json.dumps(case.review_notes)))
+                 json.dumps([issue.value for issue in case.pending_issues]), json.dumps(case.review_notes),
+                 _timestamp(case.waiting_since)))
             stored = db.execute("SELECT COUNT(*) FROM case_messages WHERE case_id = ?",
                                 (case.case_id,)).fetchone()[0]
             db.executemany(
-                "INSERT INTO case_messages (case_id, seq, role, text, sent_at, citations) VALUES (?, ?, ?, ?, ?, ?)",
+                "INSERT INTO case_messages (case_id, seq, role, text, sent_at, citations, author_id) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
                 [(case.case_id, seq, message.role.value, message.text, _timestamp(message.sent_at),
-                  json.dumps([vars(citation) for citation in message.citations]))
+                  json.dumps([vars(citation) for citation in message.citations]), message.author_id)
                  for seq, message in enumerate(case.messages[stored:], start=stored)])
+            recorded = db.execute("SELECT COUNT(*) FROM case_transitions WHERE case_id = ?",
+                                  (case.case_id,)).fetchone()[0]
+            db.executemany(
+                "INSERT INTO case_transitions (case_id, seq, at, from_status, to_status, actor_role, actor_id, note) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                [(case.case_id, seq, _timestamp(item.at), item.from_status.value, item.to_status.value,
+                  item.actor_role, item.actor_id, item.note)
+                 for seq, item in enumerate(case.transitions[recorded:], start=recorded)])
             if receipt is not None:
                 db.execute("DELETE FROM receipts WHERE created_at < ?",
                            (_timestamp(self.clock() - self.RECEIPT_RETENTION),))
@@ -201,6 +251,23 @@ class CaseStore:
                            "VALUES (?, ?, ?, ?, ?)",
                            (receipt.customer_id, receipt.idempotency_key, receipt.fingerprint, receipt.response,
                             _timestamp(receipt.created_at)))
+
+    def queue(self, status: CaseStatus, limit: int, after: tuple[str, str] | None = None) -> list[QueueEntry]:
+        """Cases in a status, longest waiting first. ``after`` is the (waiting since, case ID)
+        of the last entry of the previous page."""
+        since, case_id = after or ("", "")
+        with self.lock:
+            rows = self._db.execute(
+                """SELECT c.case_id, c.customer_id, c.order_id, c.status, c.issues, c.review_notes,
+                          c.status_changed_at, COUNT(m.seq) AS message_count
+                   FROM cases c LEFT JOIN case_messages m ON m.case_id = c.case_id
+                   WHERE c.status = ? AND (c.status_changed_at, c.case_id) > (?, ?)
+                   GROUP BY c.case_id ORDER BY c.status_changed_at, c.case_id LIMIT ?""",
+                (status.value, since, case_id, limit)).fetchall()
+        return [QueueEntry(row["case_id"], row["customer_id"], row["order_id"], CaseStatus(row["status"]),
+                           tuple(Issue(value) for value in json.loads(row["issues"])),
+                           tuple(json.loads(row["review_notes"])), datetime.fromisoformat(row["status_changed_at"]),
+                           row["status_changed_at"], row["message_count"]) for row in rows]
 
     def earlier_cases(self, customer_id: str, since: datetime, limit: int,
                       exclude_case_id: str | None = None) -> list[EarlierCase]:

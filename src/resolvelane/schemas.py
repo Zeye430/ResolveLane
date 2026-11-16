@@ -89,3 +89,69 @@ class CaseView(_View):
 
 class ErrorResponse(BaseModel):
     detail: str
+
+
+# --- support desk: internal views for support agents --------------------------------
+
+class SupportMessageView(_View):
+    role: MessageRole
+    text: str
+    sent_at: datetime
+    citations: list[CitationView]
+    author_id: str | None
+
+
+class TransitionView(_View):
+    at: datetime
+    from_status: CaseStatus
+    to_status: CaseStatus
+    actor_role: str
+    actor_id: str | None
+    note: str
+
+
+class SupportCaseView(_View):
+    """Everything support agents need to handle a case, including internal notes."""
+
+    case_id: str
+    customer_id: str
+    order_id: str | None
+    status: CaseStatus
+    issues: list[Issue]
+    pending_issues: list[Issue]
+    review_notes: list[str]
+    created_at: datetime
+    waiting_since: datetime
+    summary: str | None = Field(description="Model-written summary of older messages; derived, not a record")
+    messages: list[SupportMessageView]
+    transitions: list[TransitionView]
+
+
+class QueueEntryView(_View):
+    case_id: str
+    customer_id: str
+    order_id: str | None
+    status: CaseStatus
+    issues: list[Issue]
+    review_notes: list[str]
+    waiting_since: datetime
+    message_count: int
+
+
+class QueuePageView(BaseModel):
+    cases: list[QueueEntryView]
+    next_cursor: str | None = Field(description="Pass as cursor to read the next page; null on the last page")
+
+
+class SupportReplyRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=2000)
+
+
+class ResolveRequest(BaseModel):
+    note: str = Field(min_length=1, max_length=500, description="Internal note on how the case was resolved")
+
+
+class SupportActionResponse(BaseModel):
+    case_id: str
+    status: CaseStatus
+    message_count: int
