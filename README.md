@@ -9,7 +9,7 @@ Python 3.10 or newer is required.
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install -e '.[dev,local-embedding]'
+python -m pip install -e '.[dev,local-embedding,mcp]'
 uvicorn resolvelane.api:app --reload
 ```
 
@@ -20,7 +20,7 @@ cp .env.example .env
 set -a && source .env && set +a
 ```
 
-The `local-embedding` extra installs the offline issue recognition tier (see below). Its ONNX runtime currently supports Python up to 3.14; on newer Python, install `.[dev]` and the tier is skipped.
+The `local-embedding` extra installs the offline issue recognition tier, and the `mcp` extra the connections to external services (see below). Its ONNX runtime currently supports Python up to 3.14; on newer Python, install `.[dev]` and the tier is skipped.
 
 The health endpoint is available at `http://127.0.0.1:8000/health` and the API documentation at `http://127.0.0.1:8000/docs`.
 
@@ -105,6 +105,26 @@ A reply is not used, and the rule-based reply is sent instead, when the model is
 Support operations can adjust how the agent handles a kind of case without changing code, through handling guides in `skills/<name>/SKILL.md` (format in [`skills/README.md`](skills/README.md)). A guide is added to the agent's instructions when the case has raised one of its issues, or the customer's message contains one of its keywords as whole words. Keywords cover situations that are not an issue type: the `allergy-or-illness` guide applies to any message mentioning an allergic reaction or feeling ill.
 
 Guides sit below the agent's fixed rules and cannot override them; they contain guidance, not times, amounts or policy terms, which come from policies and the help center. Every guide is validated at startup, and an invalid one stops the application from starting. The log records which guide versions shaped each reply (`skills=missing-item@1`). Set `RESOLVELANE_SKILLS_DIR` to load guides from another directory. Rule-based replies do not use guides.
+
+### External services (MCP)
+
+The reply agent can use tools of external services through the Model Context Protocol. `mcp_servers.example.json` connects a simulated courier tracking service (`resolvelane.simulator.courier_mcp`, invented data), so the agent can say where an order in progress is:
+
+```bash
+export RESOLVELANE_MCP_CONFIG=mcp_servers.example.json
+```
+
+What a server says about itself is not trusted:
+
+- Only tools listed in the configuration are offered, and only if the server marks them read-only; the simulator's `reassign_courier` is never offered, even when listed.
+- The agent sees the description written in the configuration. The server's tool description and the descriptions in its input schema are dropped, so a server cannot add instructions to the agent's tool list.
+- Arguments that identify data are bound in the configuration (`"bind": {"order_id": "order_id"}`): they are filled in from the case's order and are not part of the schema the agent sees, so the agent cannot ask about another customer's order. Only the order or merchant ID can be bound; customer IDs are never sent.
+- A stdio server receives only `PATH`, `HOME` and the variables listed in `env_vars`, never the application's keys. A `streamable_http` server takes its authentication headers from environment variables named in `headers_env`.
+- Results larger than `max_result_chars` are refused; results are labelled as the service's reports and treated as data. Numbers in them count as sourced in the reply's grounding check.
+
+Connections stay open and are reconnected in the background when they fail. Each server has a circuit breaker (two failures pause it for 30 seconds), and while a server is down its tools are not offered; the agent tells the customer it cannot check rather than guessing. When a server announces that its tools changed (protocol version 2026-07-28 subscriptions), the list is read and checked again; for older servers it is read again on reconnection.
+
+The help center can also be searched by other MCP clients: `python -m resolvelane.mcp_server` serves a read-only `search_help_center` tool over stdio. It exposes only the public help center, never cases or orders.
 
 ### Help center
 

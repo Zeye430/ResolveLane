@@ -1,6 +1,7 @@
 """HTTP application entry point."""
 
 import logging
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Annotated
@@ -21,6 +22,7 @@ from resolvelane.services.support_chat import (CaseNotFound, IdempotencyKeyReuse
                                                handle_message)
 from resolvelane.simulator.fixtures import ORDERS, POLICIES
 from resolvelane.skills import load_skills
+from resolvelane.tools import ToolGateway
 from resolvelane.simulator.help_center import ARTICLES
 from resolvelane.simulator.order_source import InMemoryOrderSource
 
@@ -57,6 +59,8 @@ def create_app(token_registry: TokenRegistry | None = None, order_source: OrderS
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         yield
+        if app.state.mcp is not None:
+            app.state.mcp.close()
         if app.state.summaries is not None:
             app.state.summaries.close()
         if owned_store is not None:  # a store passed in belongs to the caller
@@ -72,9 +76,11 @@ def create_app(token_registry: TokenRegistry | None = None, order_source: OrderS
     local_embedder = load_local_embedder() if recognizer is None or reply_agent is None else None
     app.state.recognizer = (recognizer if recognizer is not None
                             else load_recognizer(llm=llm, local_embedder=local_embedder))
+    # External services' tools (MCP) are only used by the reply agent.
+    app.state.mcp = _load_mcp() if reply_agent is None and llm is not None else None
     app.state.reply_agent = (reply_agent if reply_agent is not None
                              else load_reply_agent(llm, POLICIES, HelpCenter(ARTICLES, local_embedder),
-                                              load_skills()))
+                                                   load_skills(), ToolGateway(external=app.state.mcp)))
     # Summaries are only needed by the reply agent, and use the same provider.
     app.state.summaries = (load_summary_queue(app.state.reply_agent.llm, app.state.case_store)
                            if app.state.reply_agent is not None else None)
@@ -169,6 +175,13 @@ def create_app(token_registry: TokenRegistry | None = None, order_source: OrderS
         return CaseView.model_validate(case)
 
     return app
+
+
+def _load_mcp():
+    if not os.environ.get("RESOLVELANE_MCP_CONFIG", "").strip():
+        return None
+    from resolvelane.mcp_client import load_mcp_hub  # needs the optional mcp package
+    return load_mcp_hub()
 
 
 def _show_application_logs() -> None:

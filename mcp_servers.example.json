@@ -1,0 +1,19 @@
+{
+  "servers": [
+    {
+      "name": "courier",
+      "transport": "stdio",
+      "command": "python",
+      "args": ["-m", "resolvelane.simulator.courier_mcp"],
+      "timeout_s": 5,
+      "max_result_chars": 2000,
+      "tools": [
+        {
+          "name": "get_courier_status",
+          "description": "Look up the courier tracking service's latest stage for this case's order and, while the courier is on the way, the minutes until arrival. Use it for orders still in progress.",
+          "bind": {"order_id": "order_id"}
+        }
+      ]
+    }
+  ]
+}

@@ -7,6 +7,9 @@ someone else's records.
 
 Tools that would change a case do not change it. They record a proposed effect, and the
 conversation service applies it later under the case lock, after re-checking the case.
+
+Besides the built-in support tools, the gateway offers tools of external services connected
+over MCP (resolvelane.mcp_client), when configured.
 """
 
 import json
@@ -15,7 +18,7 @@ import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -41,6 +44,16 @@ class ToolContext:
     effects: list[ReviewRequest] = field(default_factory=list)
     # Help center passages returned during this reply; a reply may cite only these.
     retrieved: dict[str, Passage] = field(default_factory=dict)
+    # Results of external services during this reply; numbers in them count as sourced.
+    observations: list[str] = field(default_factory=list)
+
+
+class ToolInputError(Exception):
+    """The model's input does not match the tool's schema. The message never repeats input values."""
+
+
+class ToolRefused(Exception):
+    """The tool could not answer; the message is safe to show to the model."""
 
 
 @dataclass(frozen=True)
@@ -75,6 +88,26 @@ class ToolSpec:
         for prop in schema.get("properties", {}).values():
             prop.pop("title", None)
         return {"name": self.name, "description": self.description, "input_schema": schema}
+
+    def parse(self, args: Any) -> Any:
+        try:
+            return self.input_model.model_validate(args)
+        except ValidationError as error:
+            raise ToolInputError(_validation_summary(error)) from None
+
+
+class Tool(Protocol):
+    name: str
+
+    def definition(self) -> dict[str, Any]: ...
+
+    def parse(self, args: Any) -> Any: ...
+
+    def handler(self, context: ToolContext, args: Any) -> dict[str, Any]: ...
+
+
+class ExternalTools(Protocol):
+    def specs(self) -> Sequence[Tool]: ...
 
 
 # --- support tools ---------------------------------------------------------
@@ -157,11 +190,17 @@ def _validation_summary(error: ValidationError) -> str:
 
 
 class ToolGateway:
-    def __init__(self, specs: Sequence[ToolSpec] = SUPPORT_TOOLS):
+    def __init__(self, specs: Sequence[Tool] = SUPPORT_TOOLS, external: ExternalTools | None = None):
         self.specs = {spec.name: spec for spec in specs}
+        self.external = external
+
+    def _available(self) -> dict[str, Tool]:
+        # External tools come and go with their servers' connections, so they are read each time.
+        external = {spec.name: spec for spec in self.external.specs()} if self.external is not None else {}
+        return {**external, **self.specs}
 
     def definitions(self) -> list[dict[str, Any]]:
-        return [spec.definition() for spec in self.specs.values()]
+        return [spec.definition() for spec in self._available().values()]
 
     def execute(self, name: str, args: Any, context: ToolContext) -> ToolResult:
         started = time.perf_counter()
@@ -171,15 +210,17 @@ class ToolGateway:
             logger.info("tool_call name=%s ok=%s error=%s", name, trace.ok, error or "-")
             return ToolResult(json.dumps(payload), bool(error), trace)
 
-        spec = self.specs.get(name)
+        spec = self._available().get(name)
         if spec is None:
             return done({"error": f"Unknown tool {name!r}"}, "unknown_tool")
         try:
-            parsed = spec.input_model.model_validate(args)
-        except ValidationError as error:
-            return done({"error": f"Invalid input: {_validation_summary(error)}"}, "invalid_input")
+            parsed = spec.parse(args)
+        except ToolInputError as error:
+            return done({"error": f"Invalid input: {error}"}, "invalid_input")
         try:
             return done(spec.handler(context, parsed))
+        except ToolRefused as error:
+            return done({"error": str(error)}, "refused")
         except Exception:
             logger.exception("tool_failed name=%s", name)
             return done({"error": "The tool failed"}, "tool_failed")

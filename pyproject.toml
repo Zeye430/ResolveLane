@@ -18,6 +18,11 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=8,<10",
+    "mcp>=2.3,<3",
+]
+# Tools of external services over the Model Context Protocol, and the help center MCP server.
+mcp = [
+    "mcp>=2.3,<3",
 ]
 # Offline embedding tier. Its runtime (onnxruntime) supports Python up to 3.14 at the moment.
 local-embedding = [
