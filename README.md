@@ -100,6 +100,12 @@ The agent can call three tools through a gateway: `search_help_center` for gener
 
 A reply is not used, and the rule-based reply is sent instead, when the model is unavailable, stops early, makes more than three calls or four tool calls, writes more than 1,200 characters, or appears to promise a refund, credit, replacement or compensation. That last check is a phrase filter backing up the instructions, not a guarantee. When the case needs review, the reply always says so. Recognition and replies share the model's circuit breaker, so once the provider is found to be down, neither waits for it. If another message changes the case while a reply is being written, the reply is decided again by rules from the current case.
 
+### Skills
+
+Support operations can adjust how the agent handles a kind of case without changing code, through handling guides in `skills/<name>/SKILL.md` (format in [`skills/README.md`](skills/README.md)). A guide is added to the agent's instructions when the case has raised one of its issues, or the customer's message contains one of its keywords as whole words. Keywords cover situations that are not an issue type: the `allergy-or-illness` guide applies to any message mentioning an allergic reaction or feeling ill.
+
+Guides sit below the agent's fixed rules and cannot override them; they contain guidance, not times, amounts or policy terms, which come from policies and the help center. Every guide is validated at startup, and an invalid one stops the application from starting. The log records which guide versions shaped each reply (`skills=missing-item@1`). Set `RESOLVELANE_SKILLS_DIR` to load guides from another directory. Rule-based replies do not use guides.
+
 ### Help center
 
 General questions, such as how long a refund takes or whether an address can still be changed, are answered from invented help center articles (`resolvelane.simulator.help_center`). Each article version has an effective period; search covers only the newest version in effect when the question is asked, so outdated guidance cannot be returned or cited.

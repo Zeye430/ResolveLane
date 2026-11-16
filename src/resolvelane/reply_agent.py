@@ -9,6 +9,9 @@ General questions are answered from help center passages the agent searches for.
 names the passages it relies on, and code checks that each one was actually retrieved and
 that every number in the reply appears in the facts or in a cited passage.
 
+Handling guides written by support operations (skills) are added to the instructions when
+the case or the message calls for them.
+
 When the model is unavailable or its reply cannot be used, the conversation service sends
 the reference reply instead, so customers always get an answer.
 """
@@ -28,6 +31,7 @@ from resolvelane.domain.knowledge import Citation
 from resolvelane.knowledge import HelpCenter
 from resolvelane.llm import REQUEST_ERRORS, LLMProvider
 from resolvelane.schemas import CustomerOrderView
+from resolvelane.skills import SkillLibrary, skill_instructions
 from resolvelane.tools import ReviewRequest, ToolContext, ToolGateway, ToolTrace, policy_in_effect
 
 logger = logging.getLogger("resolvelane.reply_agent")
@@ -109,6 +113,7 @@ class AgentDraft:
     tool_traces: list[ToolTrace]
     rounds: int
     citations: tuple[Citation, ...] = ()
+    skills: tuple[str, ...] = ()  # name@version of each handling guide in the instructions
 
 
 def _money(minor: int) -> str:
@@ -147,11 +152,12 @@ class ReplyAgent:
     MAX_TOOL_CALLS = 4    # tool calls per reply
 
     def __init__(self, llm: LLMProvider, policies: Sequence[SupportPolicy], help_center: HelpCenter | None = None,
-                 gateway: ToolGateway | None = None):
+                 gateway: ToolGateway | None = None, skills: SkillLibrary | None = None):
         self.llm = llm
         self.policies = tuple(policies)
         self.help_center = help_center
         self.gateway = gateway or ToolGateway()
+        self.skills = skills or SkillLibrary(())
 
     def _prompt(self, request: ReplyRequest) -> str:
         # The conversation service chooses the messages: those not covered by the summary.
@@ -168,12 +174,14 @@ class ReplyAgent:
             raise AgentFailed("circuit_open")
         context = ToolContext(request.customer_id, request.order, request.now, self.policies, self.help_center)
         prompt = self._prompt(request)
+        guides = self.skills.select([*request.issues, *request.case_issues], request.message)
+        system = SYSTEM_PROMPT + skill_instructions(guides)
         messages: list[dict] = [{"role": "user", "content": prompt}]
         traces: list[ToolTrace] = []
         for round_number in range(1, self.MAX_ROUNDS + 1):
             try:
                 response = self.llm.client.messages.create(
-                    model=self.llm.model, max_tokens=4096, system=SYSTEM_PROMPT,
+                    model=self.llm.model, max_tokens=4096, system=system,
                     tools=self.gateway.definitions(), messages=messages)
             except anthropic.APIConnectionError as error:  # includes timeouts
                 self.llm.breaker.failed(ticket)
@@ -216,7 +224,8 @@ class ReplyAgent:
                 raise AgentFailed("ungrounded_number")
             review_request = context.effects[0] if context.effects else None
             return AgentDraft(self._checked(reply, request.review_required or review_request is not None),
-                              review_request, traces, round_number, tuple(passage.citation for passage in cited))
+                              review_request, traces, round_number, tuple(passage.citation for passage in cited),
+                              tuple(guide.ref for guide in guides))
         raise AgentFailed("too_many_rounds")
 
     @staticmethod
@@ -279,8 +288,8 @@ def ungrounded_numbers(reply: str, sources: str) -> list[str]:
 
 
 def load_reply_agent(llm: LLMProvider | None, policies: Sequence[SupportPolicy],
-                     help_center: HelpCenter | None = None) -> ReplyAgent | None:
+                     help_center: HelpCenter | None = None, skills: SkillLibrary | None = None) -> ReplyAgent | None:
     if llm is None:
         logger.info("no language model configured; replies are built by rules")
         return None
-    return ReplyAgent(llm, policies, help_center)
+    return ReplyAgent(llm, policies, help_center, skills=skills)

@@ -253,9 +253,11 @@ def handle_message(cases: CaseStore, orders: OrderSource, recognizer: IssueRecog
                                plan.reply.needs_human_review or review_request is not None,
                                draft.citations if draft else ())
         if draft:
-            logger.info("reply case=%s source=agent rounds=%d tools=%s citations=%s", case.case_id, draft.rounds,
+            logger.info("reply case=%s source=agent rounds=%d tools=%s citations=%s skills=%s", case.case_id,
+                        draft.rounds,
                         ",".join(f"{trace.name}:{'ok' if trace.ok else trace.error}" for trace in draft.tool_traces)
-                        or "-", ",".join(citation.source_id for citation in draft.citations) or "-")
+                        or "-", ",".join(citation.source_id for citation in draft.citations) or "-",
+                        ",".join(draft.skills) or "-")
         else:
             logger.info("reply case=%s source=rules", case.case_id)
 

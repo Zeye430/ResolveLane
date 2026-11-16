@@ -20,6 +20,7 @@ from resolvelane.services.order_lookup import OrderAccess, OrderSource, lookup_o
 from resolvelane.services.support_chat import (CaseNotFound, IdempotencyKeyReused, OrderMismatch, get_case,
                                                handle_message)
 from resolvelane.simulator.fixtures import ORDERS, POLICIES
+from resolvelane.skills import load_skills
 from resolvelane.simulator.help_center import ARTICLES
 from resolvelane.simulator.order_source import InMemoryOrderSource
 
@@ -72,7 +73,8 @@ def create_app(token_registry: TokenRegistry | None = None, order_source: OrderS
     app.state.recognizer = (recognizer if recognizer is not None
                             else load_recognizer(llm=llm, local_embedder=local_embedder))
     app.state.reply_agent = (reply_agent if reply_agent is not None
-                             else load_reply_agent(llm, POLICIES, HelpCenter(ARTICLES, local_embedder)))
+                             else load_reply_agent(llm, POLICIES, HelpCenter(ARTICLES, local_embedder),
+                                              load_skills()))
     # Summaries are only needed by the reply agent, and use the same provider.
     app.state.summaries = (load_summary_queue(app.state.reply_agent.llm, app.state.case_store)
                            if app.state.reply_agent is not None else None)
