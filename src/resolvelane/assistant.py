@@ -118,5 +118,5 @@ def respond(issues: list[Issue], order_id: str | None, order: Order | None) -> A
         parts += [_status_sentence(order), HELP_TEXT]
 
     if needs_review:
-        parts.append("I've passed this to a support agent for review. Refunds are not issued automatically.")
+        parts.append("I've passed this to a support agent for review.")
     return AssistantReply(" ".join(parts), issues, needs_review)

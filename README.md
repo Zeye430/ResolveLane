@@ -37,6 +37,25 @@ The health endpoint reports that the application is running; it does not check e
 
 Alert rules are kept with the code in `ops/prometheus/alerts.yml`, so Prometheus evaluates them rather than the application. They page when a refund payment is unconfirmed, the outbox stops draining, or server errors exceed 1%, and open a ticket when agent replies often fall back to rules, fail the promise, number or citation checks, or repeat themselves, when a circuit breaker stays open, when chat replies are slow, or when a case waits over an hour. Tests check that every rule uses only metrics the application exports.
 
+### Evaluation
+
+Unit tests check the code; the evaluation suite checks what the model does with it. `evals/scenarios.json` holds scripted conversations, each run through the whole application with the configured language model: an empty in-memory case store, the HTTP API, support agent steps (replying, approving or rejecting a refund, resolving) and payment sending. After each customer message:
+
+- code checks the expectations exactly: case status, review, which refund the assistant drafted, whether the agent's reply was used, citations, and patterns the reply must or must not contain;
+- a judge model gives a pass or fail with a reason on what code cannot check: `grounded` (every claim is supported by what the agent was given), `answers`, `focused` (nothing the customer did not need, no repeating) and `no_false_promises`.
+
+```bash
+set -a && source .env && set +a
+python -m resolvelane.evaluation                 # all scenarios once, about six minutes
+python -m resolvelane.evaluation --repeat 3      # pass rates over three runs of each scenario
+python -m resolvelane.evaluation --only refund-flow --no-judge
+python -m resolvelane.evaluation --calibrate     # the judge against human labels
+```
+
+The judge is checked before it is trusted: `evals/judge_calibration.json` holds replies labeled by a person, and `--calibrate` reports agreement and false passes per criterion. The judge sees the same facts, conversation, cited passages, actions and rule-based reply as the reply agent, treats them as data, and is asked again once if its answer is invalid; a judge failure is reported apart, never as a pass or a fail. `RESOLVELANE_JUDGE_MODEL` sets the judge model, by default the reply model; a different, stronger judge avoids a model favouring its own writing.
+
+Each run writes a report to `evals/reports/` (ignored by git) and is compared with `evals/baseline.json` when both ran the same scenarios, judge and models. A metric more than 0.1 below the baseline is a regression and makes the command exit with status 1, so the suite can gate a change to prompts, skills or models. `--save-baseline` makes a full run the new baseline.
+
 ## Delivery examples
 
 The delivery domain includes fictional orders, delivery events, support policies, and customer-report scenarios for development and tests. Customer reports are not verified facts, and expected review paths are test descriptions, not implemented functionality. The examples do not contain real platform records, execute refunds, or represent the policies of an existing marketplace.
@@ -148,7 +167,7 @@ A reply is not used, and the rule-based reply is sent instead, when the model is
 
 Support operations can adjust how the agent handles a kind of case without changing code, through handling guides in `skills/<name>/SKILL.md` (format in [`skills/README.md`](skills/README.md)). A guide is added to the agent's instructions when the case has raised one of its issues, or the customer's message contains one of its keywords as whole words. Keywords cover situations that are not an issue type: the `allergy-or-illness` guide applies to any message mentioning an allergic reaction or feeling ill.
 
-Guides sit below the agent's fixed rules and cannot override them; they contain guidance, not times, amounts or policy terms, which come from policies and the help center. Every guide is validated at startup, and an invalid one stops the application from starting. The log records which guide versions shaped each reply (`skills=missing-item@2`). Set `RESOLVELANE_SKILLS_DIR` to load guides from another directory. Rule-based replies do not use guides.
+Guides sit below the agent's fixed rules and cannot override them; they contain guidance, not times, amounts or policy terms, which come from policies and the help center. Every guide is validated at startup, and an invalid one stops the application from starting. The log records which guide versions shaped each reply (`skills=missing-item@3`). Set `RESOLVELANE_SKILLS_DIR` to load guides from another directory. Rule-based replies do not use guides.
 
 ### External services (MCP)
 

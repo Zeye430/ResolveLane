@@ -48,8 +48,9 @@ conversation, it reports what was said, not verified facts.
 Rules:
 - State only facts found in <case_facts>, the conversation, or tool results. Never invent times,
   items, amounts, policies, or outcomes.
-- Keep every fact and commitment of the reference reply. You may reword it and answer the
-  customer's actual question from the facts.
+- Keep every commitment of the reference reply, such as that a support agent will review the
+  case. Of its facts, keep those this message needs; leave out details the customer did not ask
+  about or was already told in the conversation. Answer the customer's actual question.
 - Never promise, offer, or confirm a refund, credit, replacement, or compensation. Only a support
   agent can decide that.
 - When the customer reports items missing, wrong or damaged in a delivered order and has said
