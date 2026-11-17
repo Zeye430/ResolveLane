@@ -8,11 +8,19 @@ passed, a single probe call is let through: success closes the breaker, failure 
 import logging
 import threading
 import time
+import weakref
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
 
 logger = logging.getLogger("resolvelane.resilience")
+
+_BREAKERS: "weakref.WeakSet[CircuitBreaker]" = weakref.WeakSet()
+
+
+def breakers() -> list["CircuitBreaker"]:
+    """The breakers in use, for monitoring."""
+    return sorted(_BREAKERS, key=lambda breaker: breaker.name)
 
 
 class BreakerState(str, Enum):
@@ -42,6 +50,7 @@ class CircuitBreaker:
         self._generation = 0
         self._opened_at: float | None = None
         self._probe_started_at: float | None = None
+        _BREAKERS.add(self)
 
     @property
     def state(self) -> BreakerState:

@@ -23,6 +23,7 @@ and recorded as a proposal for a support agent: a new refund, or a new version o
 case's open one. The case goes to the support agents' queue.
 """
 
+import difflib
 import hashlib
 import json
 import logging
@@ -30,6 +31,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime
 
+from resolvelane import metrics
 from resolvelane.assistant import AssistantReply, respond
 from resolvelane.case_store import CaseStore, Receipt
 from resolvelane.domain.case import (Case, CaseMessage, CaseStatus, CaseSummary, EarlierCase, Issue, MessageRole,
@@ -144,6 +146,7 @@ def _replay(cases: CaseStore, customer_id: str, key: str | None, fingerprint: st
     if receipt.fingerprint != fingerprint:
         raise IdempotencyKeyReused
     turn = replace(ChatTurn.from_json(receipt.response), replayed=True)
+    metrics.IDEMPOTENT_REPLAYS.inc()
     logger.info("idempotent_replay case=%s subject=%s", turn.case_id, customer_id)
     return turn
 
@@ -186,27 +189,30 @@ def _plan(orders: OrderSource, customer_id: str, state: CaseState, recognition: 
 
 def _draft(agent: ReplyAgent | None, cases: CaseStore, plan: ReplyPlan, customer_id: str, message: str,
            history: Sequence[CaseMessage], summary: CaseSummary | None, earlier: Sequence[EarlierCase],
-           refunds: Sequence, state: CaseState, now: datetime) -> AgentDraft | None:
+           refunds: Sequence, state: CaseState, now: datetime) -> tuple[AgentDraft | None, str]:
+    """The agent's draft, or None and why the rule-based reply is used instead."""
     if agent is None or plan.redirect:
-        return None
+        return None, "none"  # rules by design, not a fallback
     refunded = Refunded.of(cases.approved_refunds(plan.order.order_id)) if plan.order else Refunded()
     request = ReplyRequest(customer_id, message, recent_messages(history, summary), plan.order, plan.reply.issues,
                            ordered_issues(list(state.issues) + plan.new_issues), state.status,
                            plan.reply.needs_human_review, plan.reply.reply, now,
                            summary.text if summary else None, earlier, refunds, refunded)
     try:
-        return agent.draft(request)
+        return agent.draft(request), "none"
     except AgentFailed as error:
         logger.warning("reply_agent_failed reason=%s; using the rule-based reply", error)
+        return None, str(error)
     except Exception:
         logger.exception("reply_agent_error; using the rule-based reply")
-    return None
+        return None, "error"
 
 
 def _apply_refund_proposal(cases: CaseStore, case: Case, order: Order, proposal: RefundProposal) -> str:
     """Record the agent's draft refund and say what happened, for the support agent's notes."""
     current = open_refund(case.refunds)
     if current is not None and current.current.author_role == "support_agent":
+        metrics.REFUND_EVENTS.labels("draft_dropped", "assistant").inc()
         return "The assistant's refund draft was not recorded: a support agent is handling the refund"
     try:
         # Priced again: another refund of the order may have been approved since the draft.
@@ -214,6 +220,7 @@ def _apply_refund_proposal(cases: CaseStore, case: Case, order: Order, proposal:
                               len(current.versions) + 1 if current else 1, "assistant", None, cases.clock())
     except RefundInvalid as error:
         logger.info("refund_proposal case=%s recorded=false reason=%s", case.case_id, error)
+        metrics.REFUND_EVENTS.labels("draft_dropped", "assistant").inc()
         return f"The assistant's refund draft was not recorded: {error}"
     if current is not None and current.current.same_content(version):
         return f"The assistant's refund draft is unchanged: {proposal.reason}"
@@ -223,9 +230,21 @@ def _apply_refund_proposal(cases: CaseStore, case: Case, order: Order, proposal:
     else:
         refund = new_refund(case.case_id, order, version, cases.clock())
         case.refunds.append(refund)
+    metrics.REFUND_EVENTS.labels("revised" if current else "proposed", "assistant").inc()
     logger.info("refund_proposal case=%s refund=%s version=%d amount_minor=%d author=assistant", case.case_id,
                 refund.refund_id, version.version, version.amount_minor)
     return f"Refund draft of {money(version.amount_minor, refund.currency)} (version {version.version}): {proposal.reason}"
+
+
+REPEAT_SIMILARITY = 0.9
+
+
+def _repeats(case: Case, reply: str) -> bool:
+    """Whether the reply is nearly the same as the assistant's previous reply in the case: a
+    sign the conversation is not moving on, seen in live runs."""
+    previous = next((message.text for message in reversed(case.messages)
+                     if message.role is MessageRole.ASSISTANT), None)
+    return previous is not None and difflib.SequenceMatcher(None, previous, reply).ratio() >= REPEAT_SIMILARITY
 
 
 def _record(cases: CaseStore, case: Case, message: str, reply: AssistantReply) -> None:
@@ -264,8 +283,9 @@ def handle_message(cases: CaseStore, orders: OrderSource, recognizer: IssueRecog
     # Phase 2: slow work without the lock, so other customers' messages are not blocked.
     recognition = recognizer.recognize(message, history)
     plan = _plan(orders, customer_id, state, recognition, order_id)
-    draft = _draft(reply_agent, cases, plan, customer_id, message, history, summary, earlier, refunds, state,
-                   cases.clock())
+    draft, fallback = _draft(reply_agent, cases, plan, customer_id, message, history, summary, earlier, refunds,
+                             state, cases.clock())
+    metrics.RECOGNITIONS.labels(recognition.source).inc()
 
     # Phase 3: re-check and apply.
     with cases.lock:
@@ -279,6 +299,8 @@ def handle_message(cases: CaseStore, orders: OrderSource, recognizer: IssueRecog
         current = CaseState.of(case)
         if current != state:
             logger.info("case_changed_during_reply case=%s; deciding the reply again", case.case_id)
+            if draft is not None:
+                fallback = "case_changed"
             plan, draft = _plan(orders, customer_id, current, recognition, order_id), None
         if case.status is CaseStatus.RESOLVED:
             # A support agent made the last decision, so they see the follow-up.
@@ -292,6 +314,7 @@ def handle_message(cases: CaseStore, orders: OrderSource, recognizer: IssueRecog
             logger.info("order_lookup case=%s access=%s subject=%s order_id=%r", case.case_id,
                         plan.lookup.access.value, customer_id, plan.looked_up_order_id)
         if plan.redirect:
+            metrics.REPLIES.labels("rules", "none").inc()
             _record(cases, case, message, plan.reply)
             return _commit(cases, case, plan.reply, customer_id, idempotency_key, fingerprint)
 
@@ -307,7 +330,12 @@ def handle_message(cases: CaseStore, orders: OrderSource, recognizer: IssueRecog
                         or "-", ",".join(citation.source_id for citation in draft.citations) or "-",
                         ",".join(draft.skills) or "-")
         else:
-            logger.info("reply case=%s source=rules", case.case_id)
+            logger.info("reply case=%s source=rules fallback=%s", case.case_id, fallback)
+        source = "agent" if draft else "rules"
+        metrics.REPLIES.labels(source, fallback).inc()
+        if _repeats(case, reply.reply):
+            metrics.REPLY_REPEATS.labels(source).inc()
+            logger.info("reply_repeat case=%s source=%s", case.case_id, source)
 
         _record(cases, case, message, reply)
         case.issues = ordered_issues(case.issues + plan.new_issues)

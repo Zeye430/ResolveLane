@@ -1,0 +1,94 @@
+# Prometheus alerting rules for ResolveLane. Load with `rule_files` in prometheus.yml and check
+# with `promtool check rules ops/prometheus/alerts.yml`. Thresholds are starting points for a
+# demo deployment; tune them against real traffic.
+#
+# severity: page   money may be in an unknown state, or customers get no answer
+#           ticket a quality or capacity problem to look at during working hours
+
+groups:
+  - name: resolvelane-money
+    rules:
+      - alert: RefundPaymentUnconfirmed
+        expr: resolvelane_payments{status="unconfirmed"} > 0
+        labels: {severity: page}
+        annotations:
+          summary: A refund payment got no definite answer from the provider after every attempt.
+          action: Check the payment ID with the provider; the case is in the support agents' queue.
+
+      - alert: RefundOutboxNotDraining
+        # Retries take under three minutes in total; older pending payments mean sending has stopped.
+        expr: resolvelane_payment_outbox_oldest_seconds > 600
+        for: 5m
+        labels: {severity: page}
+        annotations:
+          summary: An approved refund has waited over 10 minutes to be paid.
+          action: Check RESOLVELANE_PAYMENTS is not paused and the dispatcher logs payment_dispatch_failed.
+
+      - alert: RefundPaymentsDeclined
+        expr: increase(resolvelane_payment_attempts_total{outcome="declined"}[1h]) > 3
+        labels: {severity: ticket}
+        annotations:
+          summary: The payment provider declined several refunds in the last hour.
+
+  - name: resolvelane-replies
+    rules:
+      - alert: AgentRepliesFallingBack
+        # Share of replies where the agent's draft was not used (provider errors, failed checks).
+        expr: |
+          sum(rate(resolvelane_replies_total{source="rules", fallback!="none"}[15m]))
+            / sum(rate(resolvelane_replies_total[15m])) > 0.2
+        for: 15m
+        labels: {severity: ticket}
+        annotations:
+          summary: Over 20% of replies fall back to the rule-based reply.
+
+      - alert: AgentRepliesFailChecks
+        # The model wrote something the checks refuse: a promise, an unsupported number or source.
+        expr: |
+          sum(increase(resolvelane_replies_total{fallback=~"reply_commits_to_an_outcome|ungrounded_number|cites_unretrieved_source"}[1h])) > 5
+        labels: {severity: ticket}
+        annotations:
+          summary: Agent replies keep failing the promise, number or citation checks.
+          action: Compare recent prompt, skill or model changes; run the evaluation suite.
+
+      - alert: AgentRepliesRepeat
+        expr: |
+          sum(rate(resolvelane_reply_repeats_total{source="agent"}[1h]))
+            / sum(rate(resolvelane_replies_total{source="agent"}[1h])) > 0.1
+        for: 30m
+        labels: {severity: ticket}
+        annotations:
+          summary: Over 10% of agent replies nearly repeat the previous reply in the case.
+
+      - alert: CircuitBreakerOpen
+        expr: max by (breaker) (resolvelane_circuit_breaker_open) == 1
+        for: 5m
+        labels: {severity: ticket}
+        annotations:
+          summary: "A provider is skipped by its circuit breaker: {{ $labels.breaker }}"
+
+  - name: resolvelane-service
+    rules:
+      - alert: ServerErrors
+        expr: |
+          sum(rate(resolvelane_http_requests_total{status=~"5.."}[5m]))
+            / sum(rate(resolvelane_http_requests_total[5m])) > 0.01
+        for: 10m
+        labels: {severity: page}
+        annotations:
+          summary: Over 1% of requests fail with a server error.
+
+      - alert: ChatSlow
+        expr: |
+          histogram_quantile(0.95, sum by (le) (rate(resolvelane_http_request_seconds_bucket{route="/api/v1/chat"}[10m]))) > 10
+        for: 10m
+        labels: {severity: ticket}
+        annotations:
+          summary: The slowest 5% of chat replies take over 10 seconds.
+
+      - alert: ReviewQueueWaiting
+        expr: resolvelane_review_queue_oldest_seconds > 3600
+        for: 10m
+        labels: {severity: ticket}
+        annotations:
+          summary: A case has waited over an hour for a support agent.

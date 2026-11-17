@@ -27,12 +27,14 @@ them, for example during a provider incident; they are sent once it is unset.
 import logging
 import os
 import threading
+import time
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Protocol
 
+from resolvelane import metrics
 from resolvelane.case_store import CaseStore
 from resolvelane.domain.case import Case, CaseMessage, CaseStatus, MessageRole
 from resolvelane.domain.refund import FINAL_PAYMENT_STATUSES, Payment, PaymentStatus, Refund
@@ -92,6 +94,7 @@ def _claim(cases: CaseStore, case_id: str, payment_id: str) -> _Claim | None:
 def _ask(provider: PaymentProvider, claim: _Claim) -> tuple[ProviderRefund | None, str]:
     """The provider's refund, or None and why there is no definite answer."""
     payment = claim.payment
+    started = time.perf_counter()
     try:
         if claim.reconcile or not claim.send:
             found = provider.find_refund(payment.payment_id)
@@ -101,6 +104,8 @@ def _ask(provider: PaymentProvider, claim: _Claim) -> tuple[ProviderRefund | Non
                                       payment.refund_id), ""
     except Exception as error:  # a timeout, an outage, or anything else: the outcome is not known
         return None, f"{type(error).__name__}: {error}"
+    finally:
+        metrics.PROVIDER_SECONDS.observe(time.perf_counter() - started)
 
 
 def _to_review(case: Case, now: datetime, note: str) -> None:
@@ -138,6 +143,9 @@ def _record(cases: CaseStore, claim: _Claim, result: ProviderRefund | None, erro
             else:
                 payment.next_attempt_at = now + RETRY_DELAYS[payment.attempts - 1]
         cases.commit(case)
+        metrics.PAYMENT_ATTEMPTS.labels(
+            "succeeded" if result is not None and result.succeeded else "declined" if result is not None
+            else "no_answer" if claim.send else "checked").inc()
         logger.info("payment case=%s payment=%s attempt=%d status=%s reconciled=%s error=%s", case.case_id,
                     payment.payment_id, payment.attempts, payment.status.value, claim.reconcile, error or "-")
         return payment.status

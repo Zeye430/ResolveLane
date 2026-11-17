@@ -26,7 +26,16 @@ The health endpoint is available at `http://127.0.0.1:8000/health` and the API d
 
 Run tests with `pytest`.
 
-The health endpoint reports that the application is running; it does not check external services or which issue recognition tiers are available.
+The health endpoint reports that the application is running; it does not check external services or which issue recognition tiers are available. Those are covered by the metrics below.
+
+### Monitoring
+
+`GET /metrics` serves operational metrics in the Prometheus text format to principals with the `operator` role, who cannot read cases. Labels hold only fixed sets of values, such as route templates, tool names and reasons, never case, customer or order IDs.
+
+- Events: requests by route and status, with durations; which recognition tier decided each message; who wrote each reply, and when the agent's reply was not used, why (for example `ungrounded_number`, `reply_commits_to_an_outcome`, `circuit_open`, `case_changed`); replies nearly identical to the previous one in the case; tool calls by tool and outcome; idempotent replays; refund proposals, revisions and decisions with approved amounts; payment attempts by outcome and provider call durations.
+- State, read from the records at each scrape so it cannot drift: cases by status and how long the oldest case has waited for a support agent, payments by status and the age of the oldest one not yet settled, and which circuit breakers are open.
+
+Alert rules are kept with the code in `ops/prometheus/alerts.yml`, so Prometheus evaluates them rather than the application. They page when a refund payment is unconfirmed, the outbox stops draining, or server errors exceed 1%, and open a ticket when agent replies often fall back to rules, fail the promise, number or citation checks, or repeat themselves, when a circuit breaker stays open, when chat replies are slow, or when a case waits over an hour. Tests check that every rule uses only metrics the application exports.
 
 ## Delivery examples
 

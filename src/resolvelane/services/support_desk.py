@@ -24,6 +24,7 @@ import json
 import logging
 from dataclasses import dataclass
 
+from resolvelane import metrics
 from resolvelane.case_store import CaseStore, QueueEntry, Receipt
 from resolvelane.domain.case import Case, CaseMessage, CaseStatus, CaseSummary, MessageRole
 from resolvelane.domain.refund import Refund, RefundStatus
@@ -150,6 +151,7 @@ def _act(cases: CaseStore, agent_id: str, case_id: str, operation: str, payload:
         if key is not None and (receipt := cases.receipt(agent_id, key)) is not None:
             if receipt.fingerprint != fingerprint:
                 raise IdempotencyKeyReused
+            metrics.IDEMPOTENT_REPLAYS.inc()
             return result_type.from_json(receipt.response)
         case = cases.get(case_id)
         if case is None:
@@ -222,6 +224,7 @@ def propose_refund(cases: CaseStore, orders: OrderSource, agent_id: str, case_id
         order, version = _priced(cases, case, orders, proposal, 1, agent_id, now)
         refund = new_refund(case.case_id, order, version, now)
         case.refunds.append(refund)
+        metrics.REFUND_EVENTS.labels("proposed", "support_agent").inc()
         logger.info("refund_proposal case=%s refund=%s version=1 amount_minor=%d author=%s", case.case_id,
                     refund.refund_id, version.amount_minor, agent_id)
         return RefundResult.of(refund)
@@ -258,6 +261,7 @@ def revise_refund(cases: CaseStore, orders: OrderSource, agent_id: str, refund_i
         _check_current(refund, revises)
         _, version = _priced(cases, case, orders, proposal, revises + 1, agent_id, now)
         refund.revise(version)
+        metrics.REFUND_EVENTS.labels("revised", "support_agent").inc()
         logger.info("refund_proposal case=%s refund=%s version=%d amount_minor=%d author=%s", case.case_id,
                     refund_id, version.version, version.amount_minor, agent_id)
 
@@ -280,6 +284,8 @@ def approve_refund(cases: CaseStore, orders: OrderSource, agent_id: str, refund_
             raise RefundConflict(f"{error}. Revise the proposal") from None
         refund.decide(RefundStatus.APPROVED, version, now, agent_id, note)
         refund.payment = new_payment(refund, now)  # the outbox entry, committed with the approval
+        metrics.REFUND_EVENTS.labels("approved", approved.author_role).inc()
+        metrics.REFUNDS_APPROVED_MINOR.labels(refund.currency).inc(approved.amount_minor)
         case.messages.append(CaseMessage(
             MessageRole.SUPPORT_AGENT,
             f"I've approved a refund of {money(approved.amount_minor, refund.currency)} for {describe(approved)}. "
@@ -298,6 +304,7 @@ def reject_refund(cases: CaseStore, agent_id: str, refund_id: str, version: int,
     def change(case: Case, refund: Refund, now) -> None:
         _check_current(refund, version)
         refund.decide(RefundStatus.REJECTED, version, now, agent_id, note)
+        metrics.REFUND_EVENTS.labels("rejected", refund.current.author_role).inc()
         logger.info("refund_decision case=%s refund=%s version=%d status=rejected agent=%s", case.case_id,
                     refund_id, version, agent_id)
 

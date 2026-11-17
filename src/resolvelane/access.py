@@ -21,6 +21,7 @@ MIN_TOKEN_LENGTH = 24
 class Role(str, Enum):
     CUSTOMER = "customer"
     SUPPORT_AGENT = "support_agent"
+    OPERATOR = "operator"  # reads operational metrics; sees no cases
 
 
 @dataclass(frozen=True)

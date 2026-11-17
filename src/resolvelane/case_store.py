@@ -409,6 +409,24 @@ class CaseStore:
                 "WHERE r.order_id = ? AND r.status = 'approved' ORDER BY r.decided_at", (order_id,)).fetchall()
         return [_version(row) for row in rows]
 
+    def operational_state(self, now: datetime) -> dict:
+        """Counts and ages for monitoring: cases by status, the longest wait for a support agent,
+        payments by status and the oldest payment not yet settled."""
+        with self.lock:
+            cases = dict(self._db.execute("SELECT status, COUNT(*) FROM cases GROUP BY status").fetchall())
+            oldest_review = self._db.execute("SELECT MIN(status_changed_at) FROM cases WHERE status = ?",
+                                             (CaseStatus.NEEDS_REVIEW.value,)).fetchone()[0]
+            payments = dict(self._db.execute("SELECT status, COUNT(*) FROM payments GROUP BY status").fetchall())
+            oldest_payment = self._db.execute(
+                "SELECT MIN(created_at) FROM payments WHERE status IN ('pending', 'unconfirmed')").fetchone()[0]
+
+        def age(value: str | None) -> float:
+            return max(0.0, (now - datetime.fromisoformat(value)).total_seconds()) if value else 0.0
+        return {"cases": {status.value: cases.get(status.value, 0) for status in CaseStatus},
+                "oldest_review_seconds": age(oldest_review),
+                "payments": {status.value: payments.get(status.value, 0) for status in PaymentStatus},
+                "oldest_pending_payment_seconds": age(oldest_payment)}
+
     def due_payments(self, now: datetime, limit: int) -> list[tuple[str, str]]:
         """(case ID, payment ID) of payments to attempt or check now, the longest due first."""
         with self.lock:

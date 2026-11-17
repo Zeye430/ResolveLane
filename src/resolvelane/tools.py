@@ -24,6 +24,8 @@ from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from resolvelane import metrics
+
 from resolvelane.domain.case import Issue
 from resolvelane.domain.delivery import Order, SupportPolicy
 from resolvelane.domain.refund import Refund
@@ -263,6 +265,10 @@ class ToolGateway:
         def done(payload: dict[str, Any], error: str = "") -> ToolResult:
             trace = ToolTrace(name, not error, round((time.perf_counter() - started) * 1000, 2), error)
             logger.info("tool_call name=%s ok=%s error=%s", name, trace.ok, error or "-")
+            # An unknown name comes from the model, so it is not used as a label.
+            label = name if error != "unknown_tool" else "unknown"
+            metrics.TOOL_CALLS.labels(label, error or "ok").inc()
+            metrics.TOOL_SECONDS.labels(label).observe(trace.latency_ms / 1000)
             return ToolResult(json.dumps(payload), bool(error), trace)
 
         spec = self._available().get(name)

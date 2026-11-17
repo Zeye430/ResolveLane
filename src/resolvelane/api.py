@@ -2,12 +2,16 @@
 
 import logging
 import os
+import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Path, Query, Request, Response
+from prometheus_client import CONTENT_TYPE_LATEST
 from pydantic import BaseModel
+
+from resolvelane import metrics
 
 from resolvelane.access import Principal, Role, TokenRegistry, load_token_registry
 from resolvelane.case_store import CaseStore, load_case_store
@@ -64,6 +68,12 @@ def require_customer(principal: Annotated[Principal, Depends(require_principal)]
 def require_support_agent(principal: Annotated[Principal, Depends(require_principal)]) -> Principal:
     if principal.role is not Role.SUPPORT_AGENT:
         raise HTTPException(403, "This endpoint is available to support agents only")
+    return principal
+
+
+def require_operator(principal: Annotated[Principal, Depends(require_principal)]) -> Principal:
+    if principal.role is not Role.OPERATOR:
+        raise HTTPException(403, "This endpoint is available to operators only")
     return principal
 
 
@@ -130,9 +140,29 @@ def create_app(token_registry: TokenRegistry | None = None, order_source: OrderS
     app.state.payment_provider = payment_provider if payment_provider is not None else load_payment_provider()
     app.state.payments = load_payment_dispatcher(app.state.case_store, app.state.payment_provider)
 
+    @app.middleware("http")
+    async def measure(request: Request, call_next):
+        started = time.perf_counter()
+        status = 500
+        try:
+            response = await call_next(request)
+            status = response.status_code
+            return response
+        finally:
+            # The route template, never the path itself: paths contain case and order IDs.
+            route = getattr(request.scope.get("route"), "path", "unmatched")
+            metrics.HTTP_REQUESTS.labels(route, request.method, str(status)).inc()
+            metrics.HTTP_SECONDS.labels(route).observe(time.perf_counter() - started)
+
     @app.get("/health", response_model=HealthResponse, tags=["Health"])
     def health() -> HealthResponse:
         return HealthResponse(status="ok")
+
+    @app.get("/metrics", tags=["Health"], summary="Operational metrics in the Prometheus text format",
+             response_class=Response, responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}})
+    def read_metrics(principal: Annotated[Principal, Depends(require_operator)], request: Request) -> Response:
+        store = request.app.state.case_store
+        return Response(metrics.exposition(store, store.clock()), media_type=CONTENT_TYPE_LATEST)
 
     @app.get(
         "/api/v1/orders/{order_id}",
