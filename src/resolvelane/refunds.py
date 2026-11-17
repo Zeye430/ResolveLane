@@ -87,6 +87,14 @@ def open_refund(refunds: Sequence[Refund]) -> Refund | None:
     return next((refund for refund in refunds if refund.status is RefundStatus.PROPOSED), None)
 
 
+def payment_state(refund: Refund) -> str | None:
+    """How an approved refund's payment stands, as customers are told: sent, processing (being
+    sent), or delayed (declined or unconfirmed, so a support agent is looking into it)."""
+    if refund.payment is None:
+        return None
+    return {"succeeded": "sent", "pending": "processing"}.get(refund.payment.status.value, "delayed")
+
+
 def money(minor: int, currency: str) -> str:
     return f"{minor / 100:.2f} {currency}"
 

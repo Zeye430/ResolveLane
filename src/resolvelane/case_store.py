@@ -1,4 +1,4 @@
-"""Case storage in SQLite, so cases, their messages, refunds and request receipts survive a restart.
+"""Case storage in SQLite, so cases, their messages, refunds, payments and request receipts survive a restart.
 
 A case and the receipt for the message that changed it are written in one transaction:
 after a crash either both exist or neither does, so a retried request is either replayed
@@ -24,7 +24,7 @@ from pathlib import Path
 from resolvelane.domain.case import (Case, CaseMessage, CaseStatus, CaseSummary, CaseTransition, EarlierCase, Issue,
                                      MessageRole)
 from resolvelane.domain.knowledge import Citation
-from resolvelane.domain.refund import Refund, RefundLine, RefundStatus, RefundVersion
+from resolvelane.domain.refund import Payment, PaymentStatus, Refund, RefundLine, RefundStatus, RefundVersion
 
 logger = logging.getLogger("resolvelane.case_store")
 
@@ -128,6 +128,31 @@ MIGRATIONS: tuple[tuple[str, ...], ...] = (
            BEGIN SELECT RAISE(ABORT, 'a decided refund cannot change'); END""",
         """CREATE TRIGGER refunds_are_kept BEFORE DELETE ON refunds
            BEGIN SELECT RAISE(ABORT, 'refunds are kept'); END""",
+    ),
+    (
+        # The outbox: one payment per approved refund, written with the approval, sent afterwards.
+        """CREATE TABLE payments (
+            payment_id TEXT PRIMARY KEY,
+            refund_id TEXT NOT NULL UNIQUE REFERENCES refunds (refund_id),
+            case_id TEXT NOT NULL REFERENCES cases (case_id),
+            amount_minor INTEGER NOT NULL,
+            currency TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            status TEXT NOT NULL,
+            attempts INTEGER NOT NULL,
+            next_attempt_at TEXT NOT NULL,
+            provider_refund_id TEXT,
+            last_error TEXT NOT NULL,
+            completed_at TEXT
+        )""",
+        "CREATE INDEX payments_due ON payments (status, next_attempt_at)",
+        """CREATE TRIGGER payment_amounts_are_fixed BEFORE UPDATE OF refund_id, amount_minor, currency ON payments
+           BEGIN SELECT RAISE(ABORT, 'a payment amount cannot change'); END""",
+        """CREATE TRIGGER payment_outcomes_are_final BEFORE UPDATE ON payments
+           WHEN OLD.status IN ('succeeded', 'failed')
+           BEGIN SELECT RAISE(ABORT, 'a completed payment cannot change'); END""",
+        """CREATE TRIGGER payments_are_kept BEFORE DELETE ON payments
+           BEGIN SELECT RAISE(ABORT, 'payments are kept'); END""",
     ),
 )
 
@@ -237,6 +262,8 @@ class CaseStore:
             versions = self._db.execute(
                 "SELECT v.* FROM refund_versions v JOIN refunds r ON r.refund_id = v.refund_id "
                 "WHERE r.case_id = ? ORDER BY v.refund_id, v.version", (case_id,)).fetchall()
+            payments = {row["refund_id"]: row for row in self._db.execute(
+                "SELECT * FROM payments WHERE case_id = ?", (case_id,)).fetchall()}
         return Case(
             case_id=row["case_id"], customer_id=row["customer_id"],
             created_at=datetime.fromisoformat(row["created_at"]), order_id=row["order_id"],
@@ -252,8 +279,8 @@ class CaseStore:
             transitions=[CaseTransition(datetime.fromisoformat(item["at"]), CaseStatus(item["from_status"]),
                                         CaseStatus(item["to_status"]), item["actor_role"], item["actor_id"],
                                         item["note"]) for item in transitions],
-            refunds=[_refund(row, [version for version in versions if version["refund_id"] == row["refund_id"]])
-                     for row in refunds],
+            refunds=[_refund(row, [version for version in versions if version["refund_id"] == row["refund_id"]],
+                             payments.get(row["refund_id"])) for row in refunds],
         )
 
     def commit(self, case: Case, receipt: Receipt | None = None) -> None:
@@ -321,6 +348,21 @@ class CaseStore:
             [(refund.refund_id, version.version, json.dumps([vars(line) for line in version.lines]),
               version.delivery_fee_minor, version.amount_minor, version.reason, version.author_role,
               version.author_id, _timestamp(version.created_at)) for version in refund.versions[stored:]])
+        payment = refund.payment
+        if payment is not None:
+            # A completed payment is final; only one still in progress is updated.
+            db.execute(
+                """INSERT INTO payments (payment_id, refund_id, case_id, amount_minor, currency, created_at, status,
+                                         attempts, next_attempt_at, provider_refund_id, last_error, completed_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT (payment_id) DO UPDATE SET status = excluded.status, attempts = excluded.attempts,
+                       next_attempt_at = excluded.next_attempt_at, provider_refund_id = excluded.provider_refund_id,
+                       last_error = excluded.last_error, completed_at = excluded.completed_at
+                   WHERE payments.status NOT IN ('succeeded', 'failed')""",
+                (payment.payment_id, refund.refund_id, refund.case_id, payment.amount_minor, payment.currency,
+                 _timestamp(payment.created_at), payment.status.value, payment.attempts,
+                 _timestamp(payment.next_attempt_at), payment.provider_refund_id, payment.last_error,
+                 _timestamp(payment.completed_at) if payment.completed_at else None))
 
     def queue(self, status: CaseStatus, limit: int, after: tuple[str, str] | None = None) -> list[QueueEntry]:
         """Cases in a status, longest waiting first. ``after`` is the (waiting since, case ID)
@@ -367,6 +409,14 @@ class CaseStore:
                 "WHERE r.order_id = ? AND r.status = 'approved' ORDER BY r.decided_at", (order_id,)).fetchall()
         return [_version(row) for row in rows]
 
+    def due_payments(self, now: datetime, limit: int) -> list[tuple[str, str]]:
+        """(case ID, payment ID) of payments to attempt or check now, the longest due first."""
+        with self.lock:
+            rows = self._db.execute(
+                "SELECT case_id, payment_id FROM payments WHERE status IN ('pending', 'unconfirmed') "
+                "AND next_attempt_at <= ? ORDER BY next_attempt_at LIMIT ?", (_timestamp(now), limit)).fetchall()
+        return [(row["case_id"], row["payment_id"]) for row in rows]
+
     # --- summaries ---------------------------------------------------------------
 
     def summary(self, case_id: str) -> CaseSummary | None:
@@ -410,12 +460,24 @@ def _version(row: sqlite3.Row) -> RefundVersion:
                          datetime.fromisoformat(row["created_at"]))
 
 
-def _refund(row: sqlite3.Row, versions: list[sqlite3.Row]) -> Refund:
+def _optional_time(value: str | None) -> datetime | None:
+    return datetime.fromisoformat(value) if value else None
+
+
+def _payment(row: sqlite3.Row | None) -> Payment | None:
+    if row is None:
+        return None
+    return Payment(row["payment_id"], row["refund_id"], row["amount_minor"], row["currency"],
+                   datetime.fromisoformat(row["created_at"]), datetime.fromisoformat(row["next_attempt_at"]),
+                   PaymentStatus(row["status"]), row["attempts"], row["provider_refund_id"], row["last_error"],
+                   _optional_time(row["completed_at"]))
+
+
+def _refund(row: sqlite3.Row, versions: list[sqlite3.Row], payment: sqlite3.Row | None = None) -> Refund:
     return Refund(row["refund_id"], row["case_id"], row["order_id"], row["currency"],
                   datetime.fromisoformat(row["created_at"]), [_version(version) for version in versions],
-                  RefundStatus(row["status"]), row["decided_version"],
-                  datetime.fromisoformat(row["decided_at"]) if row["decided_at"] else None, row["decided_by"],
-                  row["decision_note"])
+                  RefundStatus(row["status"]), row["decided_version"], _optional_time(row["decided_at"]),
+                  row["decided_by"], row["decision_note"], _payment(payment))
 
 
 def load_case_store(environ: Mapping[str, str] = os.environ) -> CaseStore:

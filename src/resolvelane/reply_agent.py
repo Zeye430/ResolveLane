@@ -28,12 +28,12 @@ import anthropic
 from resolvelane.domain.case import CaseMessage, CaseStatus, EarlierCase, Issue
 from resolvelane.domain.delivery import Order, OrderStatus, SupportPolicy
 from resolvelane.domain.knowledge import Citation
-from resolvelane.domain.refund import Refund, RefundStatus
+from resolvelane.domain.refund import PaymentStatus, Refund, RefundStatus
 from resolvelane.knowledge import HelpCenter
 from resolvelane.llm import REQUEST_ERRORS, LLMProvider
 from resolvelane.schemas import CustomerOrderView
 from resolvelane.skills import SkillLibrary, skill_instructions
-from resolvelane.refunds import RefundProposal, Refunded, describe, money
+from resolvelane.refunds import RefundProposal, Refunded, describe, money, payment_state
 from resolvelane.tools import ReviewRequest, ToolContext, ToolGateway, ToolTrace, policy_in_effect
 
 logger = logging.getLogger("resolvelane.reply_agent")
@@ -57,7 +57,10 @@ Rules:
   customer a support agent will review the refund request. Never state a drafted amount.
 - refunds in <case_facts> lists this case's refunds. An approved refund may be stated with its
   amount and items as given; for one under review, say a support agent is reviewing it. If one
-  was not approved, refer to the support agent's messages.
+  was not approved, refer to the support agent's messages. Say a refund has been sent only when
+  its payment is sent; while it is processing, say it has been approved and is being sent; if it
+  is delayed, say a support agent is looking into the refund, and do not say it is being sent.
+- Messages from system are notices from the application, such as that a refund was sent.
 - If review_required is true, tell the customer that a support agent will review the case.
 - <case_facts> lists the policies in effect for the issues in this case. For any other issue,
   check the policy with get_support_policy before describing how it is handled.
@@ -94,11 +97,19 @@ _PROMISE = (
     r"\b(we|i)\s*(will|'ll|have|'ve|am going to|are going to)\s+"
     r"(issue[ds]?\s+|process(ed)?\s+|sen[dt]\s+|give\s+|given\s+|arrange[ds]?\s+)?(you\s+)?"
     r"(a\s+|your\s+)?(full\s+|partial\s+)?(refund|credit|compensat|replace)"
-    r"|\byou\s*(will|'ll)\s+(get|receive|be given)\s+(a\s+)?(full\s+|partial\s+)?(refund|credit|replacement|compensation)"
-    r"|\brefund\s+(has been|was|is being|will be)\s+(issued|processed|sent{approved})")
-_COMMITMENT = re.compile(_PROMISE.format(approved="|approved"), re.IGNORECASE)
-# Once a support agent has approved a refund on the case, saying so is a fact, not a promise.
-_COMMITMENT_AFTER_APPROVAL = re.compile(_PROMISE.format(approved=""), re.IGNORECASE)
+    r"|\byou\s*(will|'ll)\s+(get|receive|be given)\s+(a\s+)?(full\s+|partial\s+)?(refund|credit|replacement|compensation)")
+_OUTCOME = r"|\brefund\s+(has been|was|is being|will be)\s+({outcomes})"
+_OUTCOMES = ("approved", "issued", "processed", "sent")
+
+
+def _commitment(stated: frozenset[str]) -> re.Pattern:
+    # Once a refund on the case has been approved, or sent, saying so is a fact, not a promise.
+    remaining = [item for item in _OUTCOMES if item not in stated]
+    return re.compile(_PROMISE + (_OUTCOME.format(outcomes="|".join(remaining)) if remaining else ""),
+                      re.IGNORECASE)
+
+
+_COMMITMENT = _commitment(frozenset())
 MAX_REPLY_CHARS = 1200
 REVIEW_SENTENCE = "A support agent will review your case."
 
@@ -140,10 +151,14 @@ def _money(minor: int) -> str:
     return f"{minor / 100:.2f}"
 
 
+def _sent(refund: Refund) -> bool:
+    return refund.payment is not None and refund.payment.status is PaymentStatus.SUCCEEDED
+
+
 def _refund_fact(refund: Refund) -> dict:
     if refund.status is RefundStatus.APPROVED:
         return {"status": "approved", "amount": money(refund.decided.amount_minor, refund.currency),
-                "items": describe(refund.decided)}
+                "items": describe(refund.decided), "payment": payment_state(refund)}
     # The amount under review is not a fact the customer can rely on yet.
     return {"status": "under_review" if refund.status is RefundStatus.PROPOSED else "not_approved"}
 
@@ -256,19 +271,23 @@ class ReplyAgent:
             review_request = context.effects[0] if context.effects else None
             review = (request.review_required or review_request is not None
                       or context.refund_proposal is not None)
-            approved = any(refund.status is RefundStatus.APPROVED for refund in request.refunds)
-            return AgentDraft(self._checked(reply, review, approved), review_request, traces, round_number,
+            stated = set()
+            if any(refund.status is RefundStatus.APPROVED for refund in request.refunds):
+                stated.add("approved")
+            if any(_sent(refund) for refund in request.refunds):
+                stated.update(("issued", "processed", "sent"))
+            return AgentDraft(self._checked(reply, review, frozenset(stated)), review_request, traces, round_number,
                               tuple(passage.citation for passage in cited), tuple(guide.ref for guide in guides),
                               context.refund_proposal)
         raise AgentFailed("too_many_rounds")
 
     @staticmethod
-    def _checked(text: str, review: bool, refund_approved: bool = False) -> str:
+    def _checked(text: str, review: bool, stated: frozenset[str] = frozenset()) -> str:
         if not text:
             raise AgentFailed("empty_reply")
         if len(text) > MAX_REPLY_CHARS:
             raise AgentFailed("reply_too_long")
-        if (_COMMITMENT_AFTER_APPROVAL if refund_approved else _COMMITMENT).search(text):
+        if (_commitment(stated) if stated else _COMMITMENT).search(text):
             raise AgentFailed("reply_commits_to_an_outcome")
         # The review notice is a commitment made by code, so it is guaranteed rather than requested.
         lowered = text.lower()

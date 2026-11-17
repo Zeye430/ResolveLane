@@ -69,12 +69,21 @@ Each revision is a new version; earlier versions are kept, with who wrote each a
 
 Customers see approved refunds in their case (`refunds`), not proposals or rejections; the support agent explains a rejection in a reply. The assistant may state an approved refund's amount and items, and the reply check allows saying a refund was approved only once one has been. Refund versions and decisions are protected in the database itself: triggers refuse any update or deletion of a version and any change to a decided refund. All refund actions accept an `Idempotency-Key`.
 
-No money moves yet: an approved refund is a recorded decision, not a payment.
+#### Payments
+
+An approved refund is paid by a simulated payment provider (`resolvelane.simulator.payment_provider`), which refunds nothing real. Approval writes the payment in the same transaction as the decision, an outbox, so an approval is never lost and no payment exists without one. A background dispatcher sends it afterwards, outside the case lock:
+
+- The payment ID is the idempotency key, so the provider refunds at most once however often it is asked, and refuses the same key with a different amount.
+- An attempt without a definite answer (a timeout, an outage) may or may not have refunded the customer. It is retried after 2, 8, 30 and 120 seconds, and each retry first looks the refund up at the provider by its key (reconciliation), sending it again only if the provider has no record of it. A crash between sending and recording is handled the same way: the attempt's lease expires and the next attempt finds the provider's record.
+- After five attempts without an answer the payment is unconfirmed: it is still looked up every ten minutes but never sent again, and the case goes back to the queue. A declined payment also returns the case to the queue, reopening it if it was resolved.
+- When the refund has been sent, the customer gets a notice in the conversation (role `system`), and the case's refund shows `payment_status: sent`. A declined or unconfirmed refund shows `delayed`, without the provider's details; the assistant then says a support agent is looking into it. The reply check allows saying a refund was sent only once it has been.
+
+Support agents see each payment with its attempts, last error and provider reference. Completed payments and payment amounts are protected by database triggers. Set `RESOLVELANE_PAYMENTS=paused` to keep approved payments in the outbox without sending them, for example during a provider incident, and `RESOLVELANE_PAYMENT_FAULTS` (for example `timeout_after,decline`) to make the simulated provider fail in a demo. Agents cannot yet act on a declined payment, for example by refunding another way; they resolve the case with a note.
 
 
 ### Storage and retries
 
-Cases, their messages, citations and refunds are stored in SQLite at `data/resolvelane.sqlite3` (ignored by git), so they survive a restart. Set `RESOLVELANE_DATABASE` to use another file, or to `:memory:` to keep nothing; tests use `:memory:`. The schema is versioned and upgraded on startup; a database written by a newer version is refused rather than changed.
+Cases, their messages, citations, refunds and payments are stored in SQLite at `data/resolvelane.sqlite3` (ignored by git), so they survive a restart. Set `RESOLVELANE_DATABASE` to use another file, or to `:memory:` to keep nothing; tests use `:memory:`. The schema is versioned and upgraded on startup; a database written by a newer version is refused rather than changed.
 
 A client that loses a response, for example to a timeout, can send the message again safely by setting an `Idempotency-Key` header, a unique value per message such as a UUID:
 

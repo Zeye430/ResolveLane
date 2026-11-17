@@ -95,12 +95,14 @@ class CaseState:
     status: CaseStatus
     issues: tuple[Issue, ...]
     pending_issues: tuple[Issue, ...]
-    refunds: tuple[tuple[str, RefundStatus, int], ...] = ()  # id, status, number of versions
+    # id, status, number of versions, payment status: a refund sent meanwhile changes what the reply may say
+    refunds: tuple[tuple[str, RefundStatus, int, str | None], ...] = ()
 
     @classmethod
     def of(cls, case: Case) -> "CaseState":
         return cls(case.order_id, case.status, tuple(case.issues), tuple(case.pending_issues),
-                   tuple((refund.refund_id, refund.status, len(refund.versions)) for refund in case.refunds))
+                   tuple((refund.refund_id, refund.status, len(refund.versions),
+                          refund.payment.status.value if refund.payment else None) for refund in case.refunds))
 
 
 NEW_CASE = CaseState(None, CaseStatus.OPEN, (), ())

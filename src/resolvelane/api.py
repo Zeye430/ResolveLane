@@ -14,11 +14,12 @@ from resolvelane.case_store import CaseStore, load_case_store
 from resolvelane.knowledge import HelpCenter
 from resolvelane.llm import load_llm_provider
 from resolvelane.memory import load_summary_queue
+from resolvelane.payments import PaymentProvider, load_payment_dispatcher
 from resolvelane.recognition import IssueRecognizer, load_local_embedder, load_recognizer
 from resolvelane.reply_agent import ReplyAgent, load_reply_agent
 from resolvelane.domain.case import Case, CaseStatus
-from resolvelane.domain.refund import RefundStatus
-from resolvelane.refunds import RefundInvalid, RefundProposal
+from resolvelane.domain.refund import PaymentStatus, RefundStatus
+from resolvelane.refunds import RefundInvalid, RefundProposal, payment_state
 from resolvelane.schemas import (CaseView, ChatRequest, ChatResponse, CitationView, CustomerOrderView,
                                  CustomerRefundView, ErrorResponse, QueuePageView, RefundActionResponse,
                                  RefundDecisionRequest, RefundProposalRequest, RefundRejectionRequest,
@@ -33,6 +34,7 @@ from resolvelane.skills import load_skills
 from resolvelane.tools import ToolGateway
 from resolvelane.simulator.help_center import ARTICLES
 from resolvelane.simulator.order_source import InMemoryOrderSource
+from resolvelane.simulator.payment_provider import load_payment_provider
 
 logger = logging.getLogger("resolvelane.api")
 
@@ -72,10 +74,18 @@ IdempotencyKey = Annotated[str | None, Header(
 
 
 def _customer_refunds(case: Case) -> list[CustomerRefundView]:
-    return [CustomerRefundView(refund_id=refund.refund_id, status=refund.status, currency=refund.currency,
-                               amount_minor=refund.decided.amount_minor, lines=list(refund.decided.lines),
-                               delivery_fee_minor=refund.decided.delivery_fee_minor, approved_at=refund.decided_at)
-            for refund in case.refunds if refund.status is RefundStatus.APPROVED]
+    # The provider's details stay internal; a support agent explains a delayed refund.
+    views = []
+    for refund in case.refunds:
+        if refund.status is not RefundStatus.APPROVED:
+            continue
+        sent = refund.payment is not None and refund.payment.status is PaymentStatus.SUCCEEDED
+        views.append(CustomerRefundView(
+            refund_id=refund.refund_id, status=refund.status, currency=refund.currency,
+            amount_minor=refund.decided.amount_minor, lines=list(refund.decided.lines),
+            delivery_fee_minor=refund.decided.delivery_fee_minor, approved_at=refund.decided_at,
+            payment_status=payment_state(refund), sent_at=refund.payment.completed_at if sent else None))
+    return views
 
 
 def _proposal(body: RefundProposalRequest) -> RefundProposal:
@@ -85,12 +95,14 @@ def _proposal(body: RefundProposalRequest) -> RefundProposal:
 
 def create_app(token_registry: TokenRegistry | None = None, order_source: OrderSource | None = None,
                case_store: CaseStore | None = None, recognizer: IssueRecognizer | None = None,
-               reply_agent: ReplyAgent | None = None) -> FastAPI:
+               reply_agent: ReplyAgent | None = None, payment_provider: PaymentProvider | None = None) -> FastAPI:
     owned_store = load_case_store() if case_store is None else None
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         yield
+        if app.state.payments is not None:
+            app.state.payments.close()
         if app.state.mcp is not None:
             app.state.mcp.close()
         if app.state.summaries is not None:
@@ -115,6 +127,8 @@ def create_app(token_registry: TokenRegistry | None = None, order_source: OrderS
                                                    load_skills(), ToolGateway(external=app.state.mcp)))
     # Summaries are only needed by the reply agent, and use the same provider.
     app.state.summaries = load_summary_queue(getattr(app.state.reply_agent, "llm", None), app.state.case_store)
+    app.state.payment_provider = payment_provider if payment_provider is not None else load_payment_provider()
+    app.state.payments = load_payment_dispatcher(app.state.case_store, app.state.payment_provider)
 
     @app.get("/health", response_model=HealthResponse, tags=["Health"])
     def health() -> HealthResponse:
@@ -339,8 +353,11 @@ def create_app(token_registry: TokenRegistry | None = None, order_source: OrderS
         response: Response,
         idempotency_key: IdempotencyKey = None,
     ) -> RefundActionResponse:
-        return _refund_action(support_desk.approve_refund, request, response, request.app.state.order_source,
-                              principal.subject_id, refund_id, body.version, body.note, idempotency_key)
+        result = _refund_action(support_desk.approve_refund, request, response, request.app.state.order_source,
+                                principal.subject_id, refund_id, body.version, body.note, idempotency_key)
+        if request.app.state.payments is not None:
+            request.app.state.payments.poke()  # send the payment now rather than at the next poll
+        return result
 
     @app.post("/api/v1/support/refunds/{refund_id}/rejection", response_model=RefundActionResponse,
               tags=["Support desk"], summary="Reject the current version of a refund proposal",

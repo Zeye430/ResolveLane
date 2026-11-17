@@ -223,8 +223,10 @@ def test_approval_tells_the_customer_and_is_final(desk):
     customer = desk.customer_case(case_id)
     assert customer["messages"][-1]["role"] == "support_agent"
     assert customer["messages"][-1]["text"] == ("I've approved a refund of 9.50 USD for 1 x Vegetable wrap. "
-                                                "It goes back to your original payment method.")
-    assert [(item["status"], item["amount_minor"]) for item in customer["refunds"]] == [("approved", 950)]
+                                                "You'll get a message here once it has been sent to your "
+                                                "original payment method.")
+    assert [(item["status"], item["amount_minor"], item["payment_status"]) for item in customer["refunds"]] == \
+        [("approved", 950, "processing")]
     refund = desk.refund(case_id)
     assert (refund["decided_version"], refund["decided_by"]) == (1, "demo-agent-301")
     assert desk.approve(refund_id, 1, agent="demo-agent-302", expect=409) == {
@@ -316,7 +318,8 @@ def test_assistant_states_an_approved_refund_from_the_facts(desk):
     desk.approve(desk.refund(case_id)["refund_id"], 1)
     desk.chat("Did my refund go through?", case_id)
     facts = case_facts(desk.agent.requests[-1], POLICIES)
-    assert facts["refunds"] == [{"status": "approved", "amount": "9.50 USD", "items": "1 x Vegetable wrap"}]
+    assert facts["refunds"] == [{"status": "approved", "amount": "9.50 USD", "items": "1 x Vegetable wrap",
+                                 "payment": "processing"}]
 
 
 # --- the record -----------------------------------------------------------------------------

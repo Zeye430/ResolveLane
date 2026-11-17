@@ -12,7 +12,9 @@ Refunds: an agent proposes one, revises a proposal (a new version; earlier versi
 kept), and approves or rejects it. A decision names the version the agent reviewed and is
 refused unless that version is still the current one, so no one approves an amount they
 have not seen. Approval prices the version again against the order's other approved
-refunds, then tells the customer. A case with an undecided refund cannot be resolved.
+refunds, tells the customer, and writes the refund's payment in the same transaction; the
+payment is sent to the provider afterwards (resolvelane.payments). A case with an undecided
+refund cannot be resolved.
 """
 
 import base64
@@ -25,6 +27,7 @@ from dataclasses import dataclass
 from resolvelane.case_store import CaseStore, QueueEntry, Receipt
 from resolvelane.domain.case import Case, CaseMessage, CaseStatus, CaseSummary, MessageRole
 from resolvelane.domain.refund import Refund, RefundStatus
+from resolvelane.payments import new_payment
 from resolvelane.refunds import (RefundInvalid, RefundProposal, Refunded, describe, money, new_refund, new_version,
                                  open_refund, price_refund)
 from resolvelane.services.order_lookup import OrderSource
@@ -276,10 +279,12 @@ def approve_refund(cases: CaseStore, orders: OrderSource, agent_id: str, refund_
         except RefundInvalid as error:
             raise RefundConflict(f"{error}. Revise the proposal") from None
         refund.decide(RefundStatus.APPROVED, version, now, agent_id, note)
+        refund.payment = new_payment(refund, now)  # the outbox entry, committed with the approval
         case.messages.append(CaseMessage(
             MessageRole.SUPPORT_AGENT,
             f"I've approved a refund of {money(approved.amount_minor, refund.currency)} for {describe(approved)}. "
-            "It goes back to your original payment method.", now, author_id=agent_id))
+            "You'll get a message here once it has been sent to your original payment method.", now,
+            author_id=agent_id))
         logger.info("refund_decision case=%s refund=%s version=%d status=approved amount_minor=%d agent=%s",
                     case.case_id, refund_id, version, approved.amount_minor, agent_id)
 

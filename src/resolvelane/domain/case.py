@@ -34,6 +34,7 @@ class MessageRole(str, Enum):
     CUSTOMER = "customer"
     ASSISTANT = "assistant"
     SUPPORT_AGENT = "support_agent"
+    SYSTEM = "system"  # notices from the application, e.g. that a refund was sent
 
 
 @dataclass(frozen=True)

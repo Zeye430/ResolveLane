@@ -6,6 +6,9 @@ agent approves or rejects one exact version, the current one, and the decision i
 
 Amounts are computed by code from the order record (resolvelane.refunds), never taken from
 the model or the request.
+
+An approved refund gets one payment: the instruction to the payment provider, written in the
+same transaction as the approval (an outbox) and sent afterwards (resolvelane.payments).
 """
 
 from dataclasses import dataclass, field
@@ -17,6 +20,31 @@ class RefundStatus(str, Enum):
     PROPOSED = "proposed"  # waiting for a support agent's decision
     APPROVED = "approved"
     REJECTED = "rejected"
+
+
+class PaymentStatus(str, Enum):
+    PENDING = "pending"          # to be sent, or sent without a definite answer yet
+    SUCCEEDED = "succeeded"      # the provider made the refund
+    FAILED = "failed"            # the provider declined it; a support agent decides what next
+    UNCONFIRMED = "unconfirmed"  # no definite answer after every attempt; checked, never sent again
+
+
+FINAL_PAYMENT_STATUSES = (PaymentStatus.SUCCEEDED, PaymentStatus.FAILED)
+
+
+@dataclass
+class Payment:
+    payment_id: str            # also the idempotency key sent to the provider
+    refund_id: str
+    amount_minor: int          # the approved version's amount
+    currency: str
+    created_at: datetime
+    next_attempt_at: datetime
+    status: PaymentStatus = PaymentStatus.PENDING
+    attempts: int = 0
+    provider_refund_id: str | None = None
+    last_error: str = ""
+    completed_at: datetime | None = None
 
 
 class RefundDecided(Exception):
@@ -62,6 +90,7 @@ class Refund:
     decided_at: datetime | None = None
     decided_by: str | None = None
     decision_note: str = ""
+    payment: Payment | None = None  # created when the refund is approved
 
     @property
     def current(self) -> RefundVersion:

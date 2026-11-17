@@ -5,12 +5,13 @@ domain later are not exposed unless they are added here deliberately.
 """
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from resolvelane.domain.case import CaseStatus, Issue, MessageRole
 from resolvelane.domain.delivery import DeliveryEventType, OrderStatus
-from resolvelane.domain.refund import RefundStatus
+from resolvelane.domain.refund import PaymentStatus, RefundStatus
 
 
 class _View(BaseModel):
@@ -94,6 +95,10 @@ class CustomerRefundView(BaseModel):
     lines: list[RefundLineView]
     delivery_fee_minor: int
     approved_at: datetime
+    payment_status: Literal["processing", "sent", "delayed"] = Field(
+        description="sent once the payment provider has made the refund; delayed when it could not be sent "
+                    "and a support agent is looking into it")
+    sent_at: datetime | None
 
 
 class CaseView(_View):
@@ -142,6 +147,19 @@ class RefundVersionView(_View):
     created_at: datetime
 
 
+class PaymentView(_View):
+    payment_id: str = Field(description="Also the idempotency key sent to the payment provider")
+    amount_minor: int
+    currency: str
+    status: PaymentStatus
+    attempts: int
+    next_attempt_at: datetime
+    provider_refund_id: str | None
+    last_error: str
+    created_at: datetime
+    completed_at: datetime | None
+
+
 class RefundView(_View):
     refund_id: str
     order_id: str
@@ -153,6 +171,7 @@ class RefundView(_View):
     decided_at: datetime | None
     decided_by: str | None
     decision_note: str
+    payment: PaymentView | None
 
 
 class SupportCaseView(_View):
