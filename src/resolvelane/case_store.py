@@ -1,4 +1,4 @@
-"""Case storage in SQLite, so cases, their messages and request receipts survive a restart.
+"""Case storage in SQLite, so cases, their messages, refunds and request receipts survive a restart.
 
 A case and the receipt for the message that changed it are written in one transaction:
 after a crash either both exist or neither does, so a retried request is either replayed
@@ -24,6 +24,7 @@ from pathlib import Path
 from resolvelane.domain.case import (Case, CaseMessage, CaseStatus, CaseSummary, CaseTransition, EarlierCase, Issue,
                                      MessageRole)
 from resolvelane.domain.knowledge import Citation
+from resolvelane.domain.refund import Refund, RefundLine, RefundStatus, RefundVersion
 
 logger = logging.getLogger("resolvelane.case_store")
 
@@ -90,6 +91,43 @@ MIGRATIONS: tuple[tuple[str, ...], ...] = (
             PRIMARY KEY (case_id, seq)
         )""",
         "CREATE INDEX cases_by_status ON cases (status, status_changed_at, case_id)",
+    ),
+    (
+        """CREATE TABLE refunds (
+            refund_id TEXT PRIMARY KEY,
+            case_id TEXT NOT NULL REFERENCES cases (case_id),
+            order_id TEXT NOT NULL,
+            currency TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            status TEXT NOT NULL,
+            decided_version INTEGER,
+            decided_at TEXT,
+            decided_by TEXT,
+            decision_note TEXT NOT NULL
+        )""",
+        """CREATE TABLE refund_versions (
+            refund_id TEXT NOT NULL REFERENCES refunds (refund_id),
+            version INTEGER NOT NULL,
+            lines TEXT NOT NULL,
+            delivery_fee_minor INTEGER NOT NULL,
+            amount_minor INTEGER NOT NULL,
+            reason TEXT NOT NULL,
+            author_role TEXT NOT NULL,
+            author_id TEXT,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (refund_id, version)
+        )""",
+        "CREATE INDEX refunds_by_case ON refunds (case_id, created_at)",
+        "CREATE INDEX refunds_by_order ON refunds (order_id, status)",
+        # The record of what was proposed and decided is never rewritten, whoever writes to the database.
+        """CREATE TRIGGER refund_versions_are_immutable BEFORE UPDATE ON refund_versions
+           BEGIN SELECT RAISE(ABORT, 'refund versions are immutable'); END""",
+        """CREATE TRIGGER refund_versions_are_kept BEFORE DELETE ON refund_versions
+           BEGIN SELECT RAISE(ABORT, 'refund versions are immutable'); END""",
+        """CREATE TRIGGER refund_decisions_are_final BEFORE UPDATE ON refunds WHEN OLD.status != 'proposed'
+           BEGIN SELECT RAISE(ABORT, 'a decided refund cannot change'); END""",
+        """CREATE TRIGGER refunds_are_kept BEFORE DELETE ON refunds
+           BEGIN SELECT RAISE(ABORT, 'refunds are kept'); END""",
     ),
 )
 
@@ -194,6 +232,11 @@ class CaseStore:
                                         (case_id,)).fetchall()
             transitions = self._db.execute("SELECT * FROM case_transitions WHERE case_id = ? ORDER BY seq",
                                            (case_id,)).fetchall()
+            refunds = self._db.execute("SELECT * FROM refunds WHERE case_id = ? ORDER BY created_at, refund_id",
+                                       (case_id,)).fetchall()
+            versions = self._db.execute(
+                "SELECT v.* FROM refund_versions v JOIN refunds r ON r.refund_id = v.refund_id "
+                "WHERE r.case_id = ? ORDER BY v.refund_id, v.version", (case_id,)).fetchall()
         return Case(
             case_id=row["case_id"], customer_id=row["customer_id"],
             created_at=datetime.fromisoformat(row["created_at"]), order_id=row["order_id"],
@@ -209,6 +252,8 @@ class CaseStore:
             transitions=[CaseTransition(datetime.fromisoformat(item["at"]), CaseStatus(item["from_status"]),
                                         CaseStatus(item["to_status"]), item["actor_role"], item["actor_id"],
                                         item["note"]) for item in transitions],
+            refunds=[_refund(row, [version for version in versions if version["refund_id"] == row["refund_id"]])
+                     for row in refunds],
         )
 
     def commit(self, case: Case, receipt: Receipt | None = None) -> None:
@@ -244,6 +289,8 @@ class CaseStore:
                 [(case.case_id, seq, _timestamp(item.at), item.from_status.value, item.to_status.value,
                   item.actor_role, item.actor_id, item.note)
                  for seq, item in enumerate(case.transitions[recorded:], start=recorded)])
+            for refund in case.refunds:
+                self._write_refund(db, refund)
             if receipt is not None:
                 db.execute("DELETE FROM receipts WHERE created_at < ?",
                            (_timestamp(self.clock() - self.RECEIPT_RETENTION),))
@@ -251,6 +298,29 @@ class CaseStore:
                            "VALUES (?, ?, ?, ?, ?)",
                            (receipt.customer_id, receipt.idempotency_key, receipt.fingerprint, receipt.response,
                             _timestamp(receipt.created_at)))
+
+    @staticmethod
+    def _write_refund(db: sqlite3.Connection, refund: Refund) -> None:
+        # Only an undecided refund is updated; a decided one is final (and a trigger enforces it).
+        db.execute(
+            """INSERT INTO refunds (refund_id, case_id, order_id, currency, created_at, status, decided_version,
+                                    decided_at, decided_by, decision_note)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT (refund_id) DO UPDATE SET status = excluded.status,
+                   decided_version = excluded.decided_version, decided_at = excluded.decided_at,
+                   decided_by = excluded.decided_by, decision_note = excluded.decision_note
+               WHERE refunds.status = 'proposed'""",
+            (refund.refund_id, refund.case_id, refund.order_id, refund.currency, _timestamp(refund.created_at),
+             refund.status.value, refund.decided_version,
+             _timestamp(refund.decided_at) if refund.decided_at else None, refund.decided_by, refund.decision_note))
+        stored = db.execute("SELECT COUNT(*) FROM refund_versions WHERE refund_id = ?",
+                            (refund.refund_id,)).fetchone()[0]
+        db.executemany(
+            "INSERT INTO refund_versions (refund_id, version, lines, delivery_fee_minor, amount_minor, reason, "
+            "author_role, author_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [(refund.refund_id, version.version, json.dumps([vars(line) for line in version.lines]),
+              version.delivery_fee_minor, version.amount_minor, version.reason, version.author_role,
+              version.author_id, _timestamp(version.created_at)) for version in refund.versions[stored:]])
 
     def queue(self, status: CaseStatus, limit: int, after: tuple[str, str] | None = None) -> list[QueueEntry]:
         """Cases in a status, longest waiting first. ``after`` is the (waiting since, case ID)
@@ -279,6 +349,23 @@ class CaseStore:
                 (customer_id, _timestamp(since), exclude_case_id or "", limit)).fetchall()
         return [EarlierCase(row["case_id"], row["order_id"], tuple(Issue(value) for value in json.loads(row["issues"])),
                             CaseStatus(row["status"]), datetime.fromisoformat(row["created_at"])) for row in rows]
+
+    # --- refunds -------------------------------------------------------------------
+
+    def refund_case(self, refund_id: str) -> str | None:
+        """The case a refund belongs to; it never moves to another case."""
+        with self.lock:
+            row = self._db.execute("SELECT case_id FROM refunds WHERE refund_id = ?", (refund_id,)).fetchone()
+        return row["case_id"] if row else None
+
+    def approved_refunds(self, order_id: str) -> list[RefundVersion]:
+        """The approved versions of every refund of the order, in all cases."""
+        with self.lock:
+            rows = self._db.execute(
+                "SELECT v.* FROM refunds r JOIN refund_versions v "
+                "ON v.refund_id = r.refund_id AND v.version = r.decided_version "
+                "WHERE r.order_id = ? AND r.status = 'approved' ORDER BY r.decided_at", (order_id,)).fetchall()
+        return [_version(row) for row in rows]
 
     # --- summaries ---------------------------------------------------------------
 
@@ -315,6 +402,20 @@ class CaseStore:
             return None
         return Receipt(row["customer_id"], row["idempotency_key"], row["fingerprint"], row["response"],
                        datetime.fromisoformat(row["created_at"]))
+
+
+def _version(row: sqlite3.Row) -> RefundVersion:
+    return RefundVersion(row["version"], tuple(RefundLine(**line) for line in json.loads(row["lines"])),
+                         row["delivery_fee_minor"], row["reason"], row["author_role"], row["author_id"],
+                         datetime.fromisoformat(row["created_at"]))
+
+
+def _refund(row: sqlite3.Row, versions: list[sqlite3.Row]) -> Refund:
+    return Refund(row["refund_id"], row["case_id"], row["order_id"], row["currency"],
+                  datetime.fromisoformat(row["created_at"]), [_version(version) for version in versions],
+                  RefundStatus(row["status"]), row["decided_version"],
+                  datetime.fromisoformat(row["decided_at"]) if row["decided_at"] else None, row["decided_by"],
+                  row["decision_note"])
 
 
 def load_case_store(environ: Mapping[str, str] = os.environ) -> CaseStore:

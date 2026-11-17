@@ -17,6 +17,10 @@ in phase 1 and again in phase 3, in case a duplicate of the request finished mea
 Phase 1 also gathers the agent's memory (see resolvelane.memory): the case summary, the
 messages it does not cover, and the customer's other recent cases. Once a conversation is
 long enough, phase 3 queues a new summary, which is written in the background.
+
+A refund the agent drafts is priced again in phase 3 against the refunds approved by then,
+and recorded as a proposal for a support agent: a new refund, or a new version of the
+case's open one. The case goes to the support agents' queue.
 """
 
 import hashlib
@@ -32,8 +36,11 @@ from resolvelane.domain.case import (Case, CaseMessage, CaseStatus, CaseSummary,
                                      ordered_issues)
 from resolvelane.domain.delivery import Order
 from resolvelane.domain.knowledge import Citation
+from resolvelane.domain.refund import RefundStatus
 from resolvelane.memory import SummaryQueue, earlier_cases, needs_summary, recent_messages
 from resolvelane.recognition import IssueRecognizer, Recognition
+from resolvelane.refunds import (RefundInvalid, RefundProposal, Refunded, money, new_refund, new_version,
+                                 open_refund)
 from resolvelane.reply_agent import AgentDraft, AgentFailed, ReplyAgent, ReplyRequest
 from resolvelane.services.order_lookup import OrderLookupResult, OrderSource, lookup_order
 
@@ -88,10 +95,12 @@ class CaseState:
     status: CaseStatus
     issues: tuple[Issue, ...]
     pending_issues: tuple[Issue, ...]
+    refunds: tuple[tuple[str, RefundStatus, int], ...] = ()  # id, status, number of versions
 
     @classmethod
     def of(cls, case: Case) -> "CaseState":
-        return cls(case.order_id, case.status, tuple(case.issues), tuple(case.pending_issues))
+        return cls(case.order_id, case.status, tuple(case.issues), tuple(case.pending_issues),
+                   tuple((refund.refund_id, refund.status, len(refund.versions)) for refund in case.refunds))
 
 
 NEW_CASE = CaseState(None, CaseStatus.OPEN, (), ())
@@ -173,15 +182,16 @@ def _plan(orders: OrderSource, customer_id: str, state: CaseState, recognition: 
     return ReplyPlan(reply, order, new_issues, lookup, effective_order_id)
 
 
-def _draft(agent: ReplyAgent | None, plan: ReplyPlan, customer_id: str, message: str,
+def _draft(agent: ReplyAgent | None, cases: CaseStore, plan: ReplyPlan, customer_id: str, message: str,
            history: Sequence[CaseMessage], summary: CaseSummary | None, earlier: Sequence[EarlierCase],
-           state: CaseState, now: datetime) -> AgentDraft | None:
+           refunds: Sequence, state: CaseState, now: datetime) -> AgentDraft | None:
     if agent is None or plan.redirect:
         return None
+    refunded = Refunded.of(cases.approved_refunds(plan.order.order_id)) if plan.order else Refunded()
     request = ReplyRequest(customer_id, message, recent_messages(history, summary), plan.order, plan.reply.issues,
                            ordered_issues(list(state.issues) + plan.new_issues), state.status,
                            plan.reply.needs_human_review, plan.reply.reply, now,
-                           summary.text if summary else None, earlier)
+                           summary.text if summary else None, earlier, refunds, refunded)
     try:
         return agent.draft(request)
     except AgentFailed as error:
@@ -189,6 +199,31 @@ def _draft(agent: ReplyAgent | None, plan: ReplyPlan, customer_id: str, message:
     except Exception:
         logger.exception("reply_agent_error; using the rule-based reply")
     return None
+
+
+def _apply_refund_proposal(cases: CaseStore, case: Case, order: Order, proposal: RefundProposal) -> str:
+    """Record the agent's draft refund and say what happened, for the support agent's notes."""
+    current = open_refund(case.refunds)
+    if current is not None and current.current.author_role == "support_agent":
+        return "The assistant's refund draft was not recorded: a support agent is handling the refund"
+    try:
+        # Priced again: another refund of the order may have been approved since the draft.
+        version = new_version(order, proposal, Refunded.of(cases.approved_refunds(order.order_id)),
+                              len(current.versions) + 1 if current else 1, "assistant", None, cases.clock())
+    except RefundInvalid as error:
+        logger.info("refund_proposal case=%s recorded=false reason=%s", case.case_id, error)
+        return f"The assistant's refund draft was not recorded: {error}"
+    if current is not None and current.current.same_content(version):
+        return f"The assistant's refund draft is unchanged: {proposal.reason}"
+    if current is not None:
+        current.revise(version)
+        refund = current
+    else:
+        refund = new_refund(case.case_id, order, version, cases.clock())
+        case.refunds.append(refund)
+    logger.info("refund_proposal case=%s refund=%s version=%d amount_minor=%d author=assistant", case.case_id,
+                refund.refund_id, version.version, version.amount_minor)
+    return f"Refund draft of {money(version.amount_minor, refund.currency)} (version {version.version}): {proposal.reason}"
 
 
 def _record(cases: CaseStore, case: Case, message: str, reply: AssistantReply) -> None:
@@ -213,7 +248,7 @@ def handle_message(cases: CaseStore, orders: OrderSource, recognizer: IssueRecog
     fingerprint = _fingerprint(message, case_id, order_id) if idempotency_key is not None else None
 
     # Phase 1: validate the request and copy what the reply needs, then release the lock.
-    state, history, summary = NEW_CASE, [], None
+    state, history, summary, refunds = NEW_CASE, [], None, []
     with cases.lock:
         if (replayed := _replay(cases, customer_id, idempotency_key, fingerprint)) is not None:
             return replayed
@@ -221,12 +256,14 @@ def handle_message(cases: CaseStore, orders: OrderSource, recognizer: IssueRecog
             case = _owned_case(cases, customer_id, case_id)
             _check_order(case, order_id)
             state, history, summary = CaseState.of(case), list(case.messages), cases.summary(case_id)
+            refunds = case.refunds
         earlier = earlier_cases(cases, customer_id, case_id, cases.clock())
 
     # Phase 2: slow work without the lock, so other customers' messages are not blocked.
     recognition = recognizer.recognize(message, history)
     plan = _plan(orders, customer_id, state, recognition, order_id)
-    draft = _draft(reply_agent, plan, customer_id, message, history, summary, earlier, state, cases.clock())
+    draft = _draft(reply_agent, cases, plan, customer_id, message, history, summary, earlier, refunds, state,
+                   cases.clock())
 
     # Phase 3: re-check and apply.
     with cases.lock:
@@ -257,8 +294,9 @@ def handle_message(cases: CaseStore, orders: OrderSource, recognizer: IssueRecog
             return _commit(cases, case, plan.reply, customer_id, idempotency_key, fingerprint)
 
         review_request = draft.review_request if draft else None
+        proposal = draft.refund_proposal if draft and plan.order is not None else None
         reply = AssistantReply(draft.reply if draft else plan.reply.reply, plan.reply.issues,
-                               plan.reply.needs_human_review or review_request is not None,
+                               plan.reply.needs_human_review or review_request is not None or proposal is not None,
                                draft.citations if draft else ())
         if draft:
             logger.info("reply case=%s source=agent rounds=%d tools=%s citations=%s skills=%s", case.case_id,
@@ -279,9 +317,15 @@ def handle_message(cases: CaseStore, orders: OrderSource, recognizer: IssueRecog
             case.pending_issues = ordered_issues(case.pending_issues + plan.new_issues)
         if review_request is not None:
             case.review_notes.append(review_request.reason)
+        if proposal is not None:
+            case.review_notes.append(_apply_refund_proposal(cases, case, plan.order, proposal))
         if reply.needs_human_review and case.status is not CaseStatus.NEEDS_REVIEW:
-            reason = (f"Rules: {', '.join(issue.value for issue in plan.reply.issues)} needs a support agent"
-                      if plan.reply.needs_human_review else f"Assistant: {review_request.reason}")
+            if plan.reply.needs_human_review:
+                reason = f"Rules: {', '.join(issue.value for issue in plan.reply.issues)} needs a support agent"
+            elif review_request is not None:
+                reason = f"Assistant: {review_request.reason}"
+            else:
+                reason = "Assistant: drafted a refund for a support agent to decide"
             case.move_to(CaseStatus.NEEDS_REVIEW, cases.clock(), "assistant", None, reason)
             logger.info("case_status case=%s status=%s issues=%s requested_by=%s", case.case_id,
                         case.status.value, ",".join(issue.value for issue in case.issues),

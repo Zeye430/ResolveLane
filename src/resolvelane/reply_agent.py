@@ -28,10 +28,12 @@ import anthropic
 from resolvelane.domain.case import CaseMessage, CaseStatus, EarlierCase, Issue
 from resolvelane.domain.delivery import Order, OrderStatus, SupportPolicy
 from resolvelane.domain.knowledge import Citation
+from resolvelane.domain.refund import Refund, RefundStatus
 from resolvelane.knowledge import HelpCenter
 from resolvelane.llm import REQUEST_ERRORS, LLMProvider
 from resolvelane.schemas import CustomerOrderView
 from resolvelane.skills import SkillLibrary, skill_instructions
+from resolvelane.refunds import RefundProposal, Refunded, describe, money
 from resolvelane.tools import ReviewRequest, ToolContext, ToolGateway, ToolTrace, policy_in_effect
 
 logger = logging.getLogger("resolvelane.reply_agent")
@@ -50,6 +52,12 @@ Rules:
   customer's actual question from the facts.
 - Never promise, offer, or confirm a refund, credit, replacement, or compensation. Only a support
   agent can decide that.
+- When the customer reports items missing, wrong or damaged in a delivered order and has said
+  which items and how many, draft a refund for exactly those with propose_refund, then tell the
+  customer a support agent will review the refund request. Never state a drafted amount.
+- refunds in <case_facts> lists this case's refunds. An approved refund may be stated with its
+  amount and items as given; for one under review, say a support agent is reviewing it. If one
+  was not approved, refer to the support agent's messages.
 - If review_required is true, tell the customer that a support agent will review the case.
 - <case_facts> lists the policies in effect for the issues in this case. For any other issue,
   check the policy with get_support_policy before describing how it is handled.
@@ -82,13 +90,15 @@ Answer with only a JSON object: {"reply": "<message to the customer>", "sources"
 where sources lists the source_id of every help center passage the reply relies on, or is empty."""
 
 # A backstop for the rule above, not a replacement for it: phrases that commit to an outcome.
-_COMMITMENT = re.compile(
+_PROMISE = (
     r"\b(we|i)\s*(will|'ll|have|'ve|am going to|are going to)\s+"
     r"(issue[ds]?\s+|process(ed)?\s+|sen[dt]\s+|give\s+|given\s+|arrange[ds]?\s+)?(you\s+)?"
     r"(a\s+|your\s+)?(full\s+|partial\s+)?(refund|credit|compensat|replace)"
-    r"|\brefund\s+(has been|was|is being|will be)\s+(issued|processed|approved|sent)"
-    r"|\byou\s*(will|'ll)\s+(get|receive|be given)\s+(a\s+)?(full\s+|partial\s+)?(refund|credit|replacement|compensation)",
-    re.IGNORECASE)
+    r"|\byou\s*(will|'ll)\s+(get|receive|be given)\s+(a\s+)?(full\s+|partial\s+)?(refund|credit|replacement|compensation)"
+    r"|\brefund\s+(has been|was|is being|will be)\s+(issued|processed|sent{approved})")
+_COMMITMENT = re.compile(_PROMISE.format(approved="|approved"), re.IGNORECASE)
+# Once a support agent has approved a refund on the case, saying so is a fact, not a promise.
+_COMMITMENT_AFTER_APPROVAL = re.compile(_PROMISE.format(approved=""), re.IGNORECASE)
 MAX_REPLY_CHARS = 1200
 REVIEW_SENTENCE = "A support agent will review your case."
 
@@ -111,6 +121,8 @@ class ReplyRequest:
     now: datetime
     summary: str | None = None   # of the messages before ``history``
     earlier_cases: Sequence[EarlierCase] = ()
+    refunds: Sequence[Refund] = ()       # the case's refunds
+    refunded: Refunded = Refunded()      # what approved refunds of the order already cover
 
 
 @dataclass(frozen=True)
@@ -121,10 +133,19 @@ class AgentDraft:
     rounds: int
     citations: tuple[Citation, ...] = ()
     skills: tuple[str, ...] = ()  # name@version of each handling guide in the instructions
+    refund_proposal: RefundProposal | None = None
 
 
 def _money(minor: int) -> str:
     return f"{minor / 100:.2f}"
+
+
+def _refund_fact(refund: Refund) -> dict:
+    if refund.status is RefundStatus.APPROVED:
+        return {"status": "approved", "amount": money(refund.decided.amount_minor, refund.currency),
+                "items": describe(refund.decided)}
+    # The amount under review is not a fact the customer can rely on yet.
+    return {"status": "under_review" if refund.status is RefundStatus.PROPOSED else "not_approved"}
 
 
 def case_facts(request: ReplyRequest, policies: Sequence[SupportPolicy]) -> dict:
@@ -142,6 +163,7 @@ def case_facts(request: ReplyRequest, policies: Sequence[SupportPolicy]) -> dict
         "earlier_cases": [{"case_id": case.case_id, "order_id": case.order_id,
                            "issues": [issue.value for issue in case.issues], "status": case.status.value,
                            "opened_on": case.opened_at.date().isoformat()} for case in request.earlier_cases],
+        "refunds": [_refund_fact(refund) for refund in request.refunds],
     }
     if order is not None:
         facts["amounts"] = {"currency": order.currency, "total": _money(order.total_minor),
@@ -179,7 +201,8 @@ class ReplyAgent:
         ticket = self.llm.breaker.acquire()
         if ticket is None:
             raise AgentFailed("circuit_open")
-        context = ToolContext(request.customer_id, request.order, request.now, self.policies, self.help_center)
+        context = ToolContext(request.customer_id, request.order, request.now, self.policies, self.help_center,
+                              refunds=request.refunds, refunded=request.refunded)
         prompt = self._prompt(request)
         guides = self.skills.select([*request.issues, *request.case_issues], request.message)
         system = SYSTEM_PROMPT + skill_instructions(guides)
@@ -231,18 +254,21 @@ class ReplyAgent:
                 logger.warning("reply_agent ungrounded numbers %s", ungrounded)
                 raise AgentFailed("ungrounded_number")
             review_request = context.effects[0] if context.effects else None
-            return AgentDraft(self._checked(reply, request.review_required or review_request is not None),
-                              review_request, traces, round_number, tuple(passage.citation for passage in cited),
-                              tuple(guide.ref for guide in guides))
+            review = (request.review_required or review_request is not None
+                      or context.refund_proposal is not None)
+            approved = any(refund.status is RefundStatus.APPROVED for refund in request.refunds)
+            return AgentDraft(self._checked(reply, review, approved), review_request, traces, round_number,
+                              tuple(passage.citation for passage in cited), tuple(guide.ref for guide in guides),
+                              context.refund_proposal)
         raise AgentFailed("too_many_rounds")
 
     @staticmethod
-    def _checked(text: str, review: bool) -> str:
+    def _checked(text: str, review: bool, refund_approved: bool = False) -> str:
         if not text:
             raise AgentFailed("empty_reply")
         if len(text) > MAX_REPLY_CHARS:
             raise AgentFailed("reply_too_long")
-        if _COMMITMENT.search(text):
+        if (_COMMITMENT_AFTER_APPROVAL if refund_approved else _COMMITMENT).search(text):
             raise AgentFailed("reply_commits_to_an_outcome")
         # The review notice is a commitment made by code, so it is guaranteed rather than requested.
         lowered = text.lower()

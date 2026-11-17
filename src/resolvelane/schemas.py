@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from resolvelane.domain.case import CaseStatus, Issue, MessageRole
 from resolvelane.domain.delivery import DeliveryEventType, OrderStatus
+from resolvelane.domain.refund import RefundStatus
 
 
 class _View(BaseModel):
@@ -76,6 +77,25 @@ class CaseMessageView(_View):
     citations: list[CitationView]
 
 
+class RefundLineView(_View):
+    item_id: str
+    name: str
+    quantity: int
+    amount_minor: int
+
+
+class CustomerRefundView(BaseModel):
+    """An approved refund. Proposals and rejections are internal: the support agent tells the customer."""
+
+    refund_id: str
+    status: RefundStatus
+    currency: str
+    amount_minor: int
+    lines: list[RefundLineView]
+    delivery_fee_minor: int
+    approved_at: datetime
+
+
 class CaseView(_View):
     """A case as its customer may see it; pending issues are internal bookkeeping."""
 
@@ -85,6 +105,7 @@ class CaseView(_View):
     issues: list[Issue]
     created_at: datetime
     messages: list[CaseMessageView]
+    refunds: list[CustomerRefundView] = Field(default_factory=list)
 
 
 class ErrorResponse(BaseModel):
@@ -110,6 +131,30 @@ class TransitionView(_View):
     note: str
 
 
+class RefundVersionView(_View):
+    version: int
+    lines: list[RefundLineView]
+    delivery_fee_minor: int
+    amount_minor: int
+    reason: str
+    author_role: str
+    author_id: str | None
+    created_at: datetime
+
+
+class RefundView(_View):
+    refund_id: str
+    order_id: str
+    currency: str
+    status: RefundStatus
+    created_at: datetime
+    versions: list[RefundVersionView] = Field(description="Every version proposed; the last one is current")
+    decided_version: int | None
+    decided_at: datetime | None
+    decided_by: str | None
+    decision_note: str
+
+
 class SupportCaseView(_View):
     """Everything support agents need to handle a case, including internal notes."""
 
@@ -125,6 +170,7 @@ class SupportCaseView(_View):
     summary: str | None = Field(description="Model-written summary of older messages; derived, not a record")
     messages: list[SupportMessageView]
     transitions: list[TransitionView]
+    refunds: list[RefundView]
 
 
 class QueueEntryView(_View):
@@ -155,3 +201,36 @@ class SupportActionResponse(BaseModel):
     case_id: str
     status: CaseStatus
     message_count: int
+
+
+class RefundItemRequest(BaseModel):
+    item_id: str = Field(min_length=1, max_length=64)
+    quantity: int = Field(ge=1, le=99)
+
+
+class RefundProposalRequest(BaseModel):
+    items: list[RefundItemRequest] = Field(max_length=50, description="Order items to refund, each once")
+    include_delivery_fee: bool = False
+    reason: str = Field(min_length=1, max_length=500, description="Internal: why this refund")
+
+
+class RefundRevisionRequest(RefundProposalRequest):
+    revises: int = Field(ge=1, description="The version this revision replaces; it must be the current one")
+
+
+class RefundDecisionRequest(BaseModel):
+    version: int = Field(ge=1, description="The version reviewed; it must be the current one")
+    note: str = Field(default="", max_length=500, description="Internal note on the decision")
+
+
+class RefundRejectionRequest(RefundDecisionRequest):
+    note: str = Field(min_length=1, max_length=500, description="Internal note on why the refund was rejected")
+
+
+class RefundActionResponse(BaseModel):
+    refund_id: str
+    case_id: str
+    status: RefundStatus
+    version: int
+    amount_minor: int
+    currency: str

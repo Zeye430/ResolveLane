@@ -21,13 +21,17 @@ def run(name, args, ctx=None, gateway=None):
 
 def test_definitions_use_plain_json_schema():
     definitions = {item["name"]: item for item in ToolGateway().definitions()}
-    assert set(definitions) == {"search_help_center", "get_support_policy", "request_human_review"}
+    assert set(definitions) == {"search_help_center", "get_support_policy", "request_human_review", "propose_refund"}
     schema = definitions["get_support_policy"]["input_schema"]
     assert schema["additionalProperties"] is False
     assert schema["required"] == ["issue"]
     assert "unknown" not in schema["properties"]["issue"]["enum"]
     assert "late_delivery" in schema["properties"]["issue"]["enum"]
     assert "title" not in schema and "$defs" not in schema
+    item = definitions["propose_refund"]["input_schema"]["properties"]["items"]["items"]
+    assert item["properties"]["quantity"] == {"type": "integer", "minimum": 1, "maximum": 99,
+                                              "description": "How many of this item to refund"}
+    assert "$ref" not in json.dumps(definitions)
     # No tool accepts a customer or order: whose data a tool sees is set by the gateway.
     for item in definitions.values():
         assert not {"customer_id", "order_id"} & set(item["input_schema"]["properties"])

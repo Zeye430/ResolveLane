@@ -102,6 +102,16 @@ POLICIES = (
         "guidance": "Verify the reported item and payment before proposing a resolution. A support agent must review any refund.",
     }),
     SupportPolicy.model_validate({
+        "policy_id": "demo-missing-item",
+        "version": "1.1",
+        "title": "Missing item review",
+        "issue_type": "missing_item",
+        "effective_from": "2026-06-01T00:00:00Z",
+        "guidance": "Verify the reported item and payment before proposing a resolution. A support agent must review "
+                    "any refund. A refund covers the missing items; the delivery fee is refunded only when nothing "
+                    "in the order arrived.",
+    }),
+    SupportPolicy.model_validate({
         "policy_id": "demo-late-delivery",
         "version": "1.0",
         "title": "Late delivery review",

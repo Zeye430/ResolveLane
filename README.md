@@ -44,7 +44,7 @@ curl -X POST http://127.0.0.1:8000/api/v1/chat \
 
 Each conversation is a case. The first message returns a `case_id`; sending it with later messages continues the case. A case remembers its order, so follow-ups need not repeat the order ID, and an issue raised before the order ID is known is answered once it arrives. A case is bound only to an order the customer may access and cannot switch to another order (`409`). Another customer's case returns `404`, the same as an unknown case. `GET /api/v1/cases/{case_id}` returns the case with its messages.
 
-Late deliveries, delivered-item reports and cancellations without a recorded reason move the case to `needs_review`, as does the assistant when a customer asks for a person; support agents pick it up from their queue (below). No refund is issued.
+Late deliveries, delivered-item reports and cancellations without a recorded reason move the case to `needs_review`, as does the assistant when a customer asks for a person; support agents pick it up from their queue (below). When the customer says which items were missing, wrong or damaged, the assistant drafts a refund for a support agent to decide (see Refunds); it never issues or promises one.
 
 ### Support desk
 
@@ -57,10 +57,24 @@ Support agents (principals with the `support_agent` role) work through cases in 
 
 Both actions accept an `Idempotency-Key` header, like customer messages. A resolved case takes no further agent replies (`409`). When the customer writes again, the case goes back to the queue, joining at the end, because a support agent made the last decision; the assistant tells the customer it has been reopened. Customer endpoints refuse support agents and the desk refuses customers (`403`). Cases are not yet assigned to a particular agent, so two agents can open the same case.
 
+### Refunds
+
+A refund is proposed, then approved or rejected by a support agent. Whoever proposes it, the assistant (with its `propose_refund` tool) or a support agent, names only order items, quantities and whether the delivery fee is included. The amount is computed from the unit prices on the order record, never taken from the model or the request. Across all of an order's approved refunds, in any case, each item can be refunded up to the quantity ordered and the delivery fee once. Only delivered orders are refunded, and tax is not refunded in this simulation.
+
+- `POST /api/v1/support/cases/{case_id}/refunds` proposes a refund on a case that has none waiting for a decision.
+- `POST /api/v1/support/refunds/{refund_id}/versions` revises a proposal, naming the version it replaces (`revises`).
+- `POST /api/v1/support/refunds/{refund_id}/approval` and `.../rejection` decide on a proposal, naming the `version` reviewed, with an internal note (required for a rejection).
+
+Each revision is a new version; earlier versions are kept, with who wrote each and why. A decision is accepted only for the current version, so an agent cannot approve an amount they have not seen: if the assistant revised the proposal after a new customer message, approving the old version returns `409` and names the current one. Approval checks the order's limits again, because another refund of the order may have been approved meanwhile, then sends the customer a message with the amount and items. A decision is final. The assistant drafts at most one open proposal per case and revises it as the customer adds details, but never revises a proposal last written by a support agent. A case with an undecided refund cannot be resolved (`409`).
+
+Customers see approved refunds in their case (`refunds`), not proposals or rejections; the support agent explains a rejection in a reply. The assistant may state an approved refund's amount and items, and the reply check allows saying a refund was approved only once one has been. Refund versions and decisions are protected in the database itself: triggers refuse any update or deletion of a version and any change to a decided refund. All refund actions accept an `Idempotency-Key`.
+
+No money moves yet: an approved refund is a recorded decision, not a payment.
+
 
 ### Storage and retries
 
-Cases, their messages and citations are stored in SQLite at `data/resolvelane.sqlite3` (ignored by git), so they survive a restart. Set `RESOLVELANE_DATABASE` to use another file, or to `:memory:` to keep nothing; tests use `:memory:`. The schema is versioned and upgraded on startup; a database written by a newer version is refused rather than changed.
+Cases, their messages, citations and refunds are stored in SQLite at `data/resolvelane.sqlite3` (ignored by git), so they survive a restart. Set `RESOLVELANE_DATABASE` to use another file, or to `:memory:` to keep nothing; tests use `:memory:`. The schema is versioned and upgraded on startup; a database written by a newer version is refused rather than changed.
 
 A client that loses a response, for example to a timeout, can send the message again safely by setting an `Idempotency-Key` header, a unique value per message such as a UUID:
 
@@ -116,7 +130,7 @@ A reply is not used, and the rule-based reply is sent instead, when the model is
 
 Support operations can adjust how the agent handles a kind of case without changing code, through handling guides in `skills/<name>/SKILL.md` (format in [`skills/README.md`](skills/README.md)). A guide is added to the agent's instructions when the case has raised one of its issues, or the customer's message contains one of its keywords as whole words. Keywords cover situations that are not an issue type: the `allergy-or-illness` guide applies to any message mentioning an allergic reaction or feeling ill.
 
-Guides sit below the agent's fixed rules and cannot override them; they contain guidance, not times, amounts or policy terms, which come from policies and the help center. Every guide is validated at startup, and an invalid one stops the application from starting. The log records which guide versions shaped each reply (`skills=missing-item@1`). Set `RESOLVELANE_SKILLS_DIR` to load guides from another directory. Rule-based replies do not use guides.
+Guides sit below the agent's fixed rules and cannot override them; they contain guidance, not times, amounts or policy terms, which come from policies and the help center. Every guide is validated at startup, and an invalid one stops the application from starting. The log records which guide versions shaped each reply (`skills=missing-item@2`). Set `RESOLVELANE_SKILLS_DIR` to load guides from another directory. Rule-based replies do not use guides.
 
 ### External services (MCP)
 

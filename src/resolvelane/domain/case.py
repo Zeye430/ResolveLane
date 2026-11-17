@@ -5,6 +5,7 @@ from datetime import datetime
 from enum import Enum
 
 from resolvelane.domain.knowledge import Citation
+from resolvelane.domain.refund import Refund
 
 
 class Issue(str, Enum):
@@ -73,6 +74,8 @@ class Case:
     review_notes: list[str] = field(default_factory=list)
     status_changed_at: datetime | None = None  # None until the first change: since creation
     transitions: list[CaseTransition] = field(default_factory=list)
+    # Refunds proposed in this case, decided or not. Internal; customers see approved ones.
+    refunds: list[Refund] = field(default_factory=list)
 
     @property
     def waiting_since(self) -> datetime:

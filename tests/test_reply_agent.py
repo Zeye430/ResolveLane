@@ -81,7 +81,7 @@ def test_reply_is_grounded_in_case_facts():
     call = client.calls[0]
     assert call["system"] == SYSTEM_PROMPT and "temperature" not in call
     assert {tool["name"] for tool in call["tools"]} == {"search_help_center", "get_support_policy",
-                                                        "request_human_review"}
+                                                        "request_human_review", "propose_refund"}
     prompt = call["messages"][0]["content"]
     facts = json.loads(prompt.split("<case_facts>\n")[1].split("\n</case_facts>")[0])
     assert facts["delivered_minutes_after_estimate"] == 15

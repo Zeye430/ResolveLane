@@ -6,7 +6,9 @@ Tool inputs therefore never name a customer or an order, so the model cannot ask
 someone else's records.
 
 Tools that would change a case do not change it. They record a proposed effect, and the
-conversation service applies it later under the case lock, after re-checking the case.
+conversation service applies it later under the case lock, after re-checking the case. A
+refund the assistant proposes is only a draft for a support agent, priced by code from the
+order record.
 
 Besides the built-in support tools, the gateway offers tools of external services connected
 over MCP (resolvelane.mcp_client), when configured.
@@ -24,7 +26,9 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from resolvelane.domain.case import Issue
 from resolvelane.domain.delivery import Order, SupportPolicy
+from resolvelane.domain.refund import Refund
 from resolvelane.knowledge import HelpCenter, Passage
+from resolvelane.refunds import RefundInvalid, RefundProposal, Refunded, money, open_refund, price_refund
 
 logger = logging.getLogger("resolvelane.tools")
 
@@ -46,6 +50,9 @@ class ToolContext:
     retrieved: dict[str, Passage] = field(default_factory=dict)
     # Results of external services during this reply; numbers in them count as sourced.
     observations: list[str] = field(default_factory=list)
+    refunds: Sequence[Refund] = ()      # the case's refunds
+    refunded: Refunded = Refunded()     # what approved refunds of the order already cover
+    refund_proposal: RefundProposal | None = None  # proposed in this reply; the last call counts
 
 
 class ToolInputError(Exception):
@@ -84,16 +91,26 @@ class ToolSpec:
 
     def definition(self) -> dict[str, Any]:
         schema = self.input_model.model_json_schema()
-        schema.pop("title", None)
-        for prop in schema.get("properties", {}).values():
-            prop.pop("title", None)
-        return {"name": self.name, "description": self.description, "input_schema": schema}
+        return {"name": self.name, "description": self.description,
+                "input_schema": _plain_schema(schema, schema.pop("$defs", {}))}
 
     def parse(self, args: Any) -> Any:
         try:
             return self.input_model.model_validate(args)
         except ValidationError as error:
             raise ToolInputError(_validation_summary(error)) from None
+
+
+def _plain_schema(node: Any, defs: dict[str, Any]) -> Any:
+    """The schema with nested models written out in place and pydantic's titles removed, because
+    some model providers do not resolve $ref."""
+    if isinstance(node, list):
+        return [_plain_schema(item, defs) for item in node]
+    if not isinstance(node, dict):
+        return node
+    if "$ref" in node:
+        return _plain_schema(defs[node["$ref"].rsplit("/", 1)[-1]], defs)
+    return {key: _plain_schema(value, defs) for key, value in node.items() if key != "title"}
 
 
 class Tool(Protocol):
@@ -165,6 +182,39 @@ def request_human_review(context: ToolContext, args: ReviewInput) -> dict[str, A
             "note": "A support agent will review the case. Do not promise an outcome or a time."}
 
 
+class RefundItemInput(_Input):
+    item_id: str = Field(min_length=1, max_length=64, description="The item_id from the order")
+    quantity: int = Field(ge=1, le=99, description="How many of this item to refund")
+
+
+class RefundInput(_Input):
+    items: list[RefundItemInput] = Field(max_length=20, description="The items the customer reported, each once")
+    include_delivery_fee: bool = Field(default=False,
+                                       description="Only when the customer reports the whole order affected")
+    reason: str = Field(min_length=1, max_length=300,
+                        description="What the customer reported, for the support agent who decides")
+
+
+def propose_refund(context: ToolContext, args: RefundInput) -> dict[str, Any]:
+    if context.order is None:
+        raise ToolRefused("No order has been found for this case.")
+    current = open_refund(context.refunds)
+    if current is not None and current.current.author_role == "support_agent":
+        raise ToolRefused("A support agent is handling the refund for this case. Do not propose another.")
+    proposal = RefundProposal(tuple((item.item_id, item.quantity) for item in args.items),
+                              args.include_delivery_fee, args.reason)
+    try:
+        lines, fee = price_refund(context.order, proposal, context.refunded)
+    except RefundInvalid as error:
+        raise ToolRefused(str(error)) from None
+    context.refund_proposal = proposal
+    amount = money(sum(line.amount_minor for line in lines) + fee, context.order.currency)
+    return {"status": "proposed_for_review", "amount": amount,
+            "items": [f"{line.quantity} x {line.name}" for line in lines] + (["delivery fee"] if fee else []),
+            "note": "Only a support agent decides on a refund. Tell the customer a support agent will review "
+                    "the refund request. Do not state the amount or say it is approved."}
+
+
 SUPPORT_TOOLS = (
     ToolSpec("search_help_center",
              "Search the help center articles currently in effect, for general questions such as refund "
@@ -179,6 +229,11 @@ SUPPORT_TOOLS = (
              "Ask a support agent to review this case. Use it when the customer asks for a person, or when the "
              "customer needs something the available facts and policies cannot answer.",
              ReviewInput, request_human_review),
+    ToolSpec("propose_refund",
+             "Draft a refund for a support agent to approve or reject, for items the customer reports missing, "
+             "wrong or damaged in a delivered order. Name only the items and quantities the customer reported; "
+             "the amount is computed from the order. Calling it again replaces this reply's draft.",
+             RefundInput, propose_refund),
 )
 
 

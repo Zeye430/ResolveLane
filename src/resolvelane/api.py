@@ -16,9 +16,13 @@ from resolvelane.llm import load_llm_provider
 from resolvelane.memory import load_summary_queue
 from resolvelane.recognition import IssueRecognizer, load_local_embedder, load_recognizer
 from resolvelane.reply_agent import ReplyAgent, load_reply_agent
-from resolvelane.domain.case import CaseStatus
-from resolvelane.schemas import (CaseView, ChatRequest, ChatResponse, CitationView, CustomerOrderView, ErrorResponse,
-                                 QueuePageView, ResolveRequest, SupportActionResponse, SupportCaseView,
+from resolvelane.domain.case import Case, CaseStatus
+from resolvelane.domain.refund import RefundStatus
+from resolvelane.refunds import RefundInvalid, RefundProposal
+from resolvelane.schemas import (CaseView, ChatRequest, ChatResponse, CitationView, CustomerOrderView,
+                                 CustomerRefundView, ErrorResponse, QueuePageView, RefundActionResponse,
+                                 RefundDecisionRequest, RefundProposalRequest, RefundRejectionRequest,
+                                 RefundRevisionRequest, ResolveRequest, SupportActionResponse, SupportCaseView,
                                  SupportReplyRequest)
 from resolvelane.services import support_desk
 from resolvelane.services.order_lookup import OrderAccess, OrderSource, lookup_order
@@ -65,6 +69,18 @@ IdempotencyKey = Annotated[str | None, Header(
     alias="Idempotency-Key", min_length=1, max_length=128, pattern=r"^[\x21-\x7e]+$",
     description="A unique value per request, such as a UUID. Retrying with the same key and body "
                 "returns the original response instead of applying the request again.")]
+
+
+def _customer_refunds(case: Case) -> list[CustomerRefundView]:
+    return [CustomerRefundView(refund_id=refund.refund_id, status=refund.status, currency=refund.currency,
+                               amount_minor=refund.decided.amount_minor, lines=list(refund.decided.lines),
+                               delivery_fee_minor=refund.decided.delivery_fee_minor, approved_at=refund.decided_at)
+            for refund in case.refunds if refund.status is RefundStatus.APPROVED]
+
+
+def _proposal(body: RefundProposalRequest) -> RefundProposal:
+    return RefundProposal(tuple((item.item_id, item.quantity) for item in body.items), body.include_delivery_fee,
+                          body.reason)
 
 
 def create_app(token_registry: TokenRegistry | None = None, order_source: OrderSource | None = None,
@@ -184,7 +200,7 @@ def create_app(token_registry: TokenRegistry | None = None, order_source: OrderS
             case = get_case(request.app.state.case_store, principal.subject_id, case_id)
         except CaseNotFound:
             raise HTTPException(404, "Case not found") from None
-        return CaseView.model_validate(case)
+        return CaseView.model_validate({**vars(case), "refunds": _customer_refunds(case)})
 
     # --- support desk ------------------------------------------------------------------
 
@@ -220,21 +236,43 @@ def create_app(token_registry: TokenRegistry | None = None, order_source: OrderS
         return SupportCaseView.model_validate({**vars(case), "waiting_since": case.waiting_since,
                                                "summary": summary.text if summary else None})
 
-    def _desk_action(action, request: Request, response: Response, *args) -> SupportActionResponse:
+    def _run(action, request: Request, response: Response, *args):
         try:
             result = action(request.app.state.case_store, *args)
         except support_desk.CaseNotFound:
             raise HTTPException(404, "Case not found") from None
+        except support_desk.RefundNotFound:
+            raise HTTPException(404, "Refund not found") from None
         except support_desk.CaseResolved:
             raise HTTPException(409, "This case is resolved") from None
+        except support_desk.RefundConflict as error:
+            raise HTTPException(409, str(error)) from None
+        except RefundInvalid as error:
+            raise HTTPException(422, str(error)) from None
         except support_desk.IdempotencyKeyReused:
             raise HTTPException(422, "This Idempotency-Key was already used for a different request") from None
         if result.replayed:
             response.headers["Idempotent-Replayed"] = "true"
+        return result
+
+    def _desk_action(action, request: Request, response: Response, *args) -> SupportActionResponse:
+        result = _run(action, request, response, *args)
         return SupportActionResponse(case_id=result.case_id, status=result.status, message_count=result.message_count)
 
+    def _refund_action(action, request: Request, response: Response, *args) -> RefundActionResponse:
+        result = _run(action, request, response, *args)
+        return RefundActionResponse(refund_id=result.refund_id, case_id=result.case_id, status=result.status,
+                                    version=result.version, amount_minor=result.amount_minor,
+                                    currency=result.currency)
+
     action_errors = {**agent_errors, 404: {"model": ErrorResponse},
-                     409: {"model": ErrorResponse, "description": "The case is resolved"}}
+                     409: {"model": ErrorResponse,
+                           "description": "The case is resolved, or a refund proposal is still undecided"}}
+    refund_errors = {**agent_errors, 404: {"model": ErrorResponse},
+                     409: {"model": ErrorResponse, "description": "The refund or case no longer allows this action, "
+                                                                  "e.g. the version reviewed is not the current one"},
+                     422: {"description": "Invalid request, a refund the order does not allow, or a reused "
+                                          "Idempotency-Key"}}
 
     @app.post("/api/v1/support/cases/{case_id}/messages", response_model=SupportActionResponse,
               tags=["Support desk"], summary="Reply to the customer as a support agent", responses=action_errors)
@@ -261,6 +299,62 @@ def create_app(token_registry: TokenRegistry | None = None, order_source: OrderS
     ) -> SupportActionResponse:
         return _desk_action(support_desk.resolve, request, response, principal.subject_id, case_id, body.note,
                             idempotency_key)
+
+    @app.post("/api/v1/support/cases/{case_id}/refunds", response_model=RefundActionResponse,
+              tags=["Support desk"], summary="Propose a refund, priced from the order record",
+              responses=refund_errors)
+    def support_propose_refund(
+        case_id: Annotated[str, Path(min_length=1, max_length=64)],
+        body: RefundProposalRequest,
+        principal: Annotated[Principal, Depends(require_support_agent)],
+        request: Request,
+        response: Response,
+        idempotency_key: IdempotencyKey = None,
+    ) -> RefundActionResponse:
+        return _refund_action(support_desk.propose_refund, request, response, request.app.state.order_source,
+                              principal.subject_id, case_id, _proposal(body), idempotency_key)
+
+    @app.post("/api/v1/support/refunds/{refund_id}/versions", response_model=RefundActionResponse,
+              tags=["Support desk"], summary="Revise a refund proposal with a new version",
+              responses=refund_errors)
+    def support_revise_refund(
+        refund_id: Annotated[str, Path(min_length=1, max_length=64)],
+        body: RefundRevisionRequest,
+        principal: Annotated[Principal, Depends(require_support_agent)],
+        request: Request,
+        response: Response,
+        idempotency_key: IdempotencyKey = None,
+    ) -> RefundActionResponse:
+        return _refund_action(support_desk.revise_refund, request, response, request.app.state.order_source,
+                              principal.subject_id, refund_id, body.revises, _proposal(body), idempotency_key)
+
+    @app.post("/api/v1/support/refunds/{refund_id}/approval", response_model=RefundActionResponse,
+              tags=["Support desk"], summary="Approve the current version of a refund proposal",
+              responses=refund_errors)
+    def support_approve_refund(
+        refund_id: Annotated[str, Path(min_length=1, max_length=64)],
+        body: RefundDecisionRequest,
+        principal: Annotated[Principal, Depends(require_support_agent)],
+        request: Request,
+        response: Response,
+        idempotency_key: IdempotencyKey = None,
+    ) -> RefundActionResponse:
+        return _refund_action(support_desk.approve_refund, request, response, request.app.state.order_source,
+                              principal.subject_id, refund_id, body.version, body.note, idempotency_key)
+
+    @app.post("/api/v1/support/refunds/{refund_id}/rejection", response_model=RefundActionResponse,
+              tags=["Support desk"], summary="Reject the current version of a refund proposal",
+              responses=refund_errors)
+    def support_reject_refund(
+        refund_id: Annotated[str, Path(min_length=1, max_length=64)],
+        body: RefundRejectionRequest,
+        principal: Annotated[Principal, Depends(require_support_agent)],
+        request: Request,
+        response: Response,
+        idempotency_key: IdempotencyKey = None,
+    ) -> RefundActionResponse:
+        return _refund_action(support_desk.reject_refund, request, response, principal.subject_id, refund_id,
+                              body.version, body.note, idempotency_key)
 
     return app
 

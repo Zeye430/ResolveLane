@@ -155,14 +155,14 @@ def draft(message, issues, case_issues=()):
 def test_guides_for_the_case_are_added_to_the_instructions():
     result, system = draft("A wrap is missing.", [Issue.MISSING_ITEM])
     assert system.startswith(SYSTEM_PROMPT)
-    assert '<guide name="missing-item" version="1">' in system
+    assert '<guide name="missing-item" version="2">' in system
     assert "late-delivery" not in system
-    assert result.skills == ("missing-item@1",)
+    assert result.skills == ("missing-item@2",)
 
 
 def test_guide_for_an_earlier_issue_of_the_case_still_applies():
     result, _ = draft("Any news?", [Issue.UNKNOWN], case_issues=[Issue.WRONG_ITEM])
-    assert result.skills == ("wrong-or-damaged-item@1",)
+    assert result.skills == ("wrong-or-damaged-item@2",)
 
 
 def test_keyword_guide_applies_without_an_issue():
