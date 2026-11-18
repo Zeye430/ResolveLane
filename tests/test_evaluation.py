@@ -8,6 +8,7 @@ import pytest
 from resolvelane.evaluation import judge as judge_module
 from resolvelane.evaluation.__main__ import CALIBRATION
 from resolvelane.evaluation.judge import CRITERIA, Judge, Judgement, JudgeOutputError, Material, Verdict, parse
+from resolvelane.evaluation.reports import ReportStore
 from resolvelane.evaluation.runner import TOKENS, Evaluation, compare, report, suite_id, summarize
 from resolvelane.evaluation.scenarios import Scenario, Suite, load_suite
 from resolvelane.recognition import KeywordRecognizer
@@ -245,3 +246,15 @@ def test_regressions_are_found_only_against_the_same_suite():
     assert compare(good, bad) == []
     assert compare(bad, {**good, "suite_id": "suite-b"}) == []
     assert compare(bad, None) == []
+
+
+def test_a_saved_report_reads_back_for_the_evaluation_page(tmp_path):
+    verdicts = {name: Verdict(name != "focused", "why") for name in CRITERIA}
+    saved = report(run_with(Judgement(verdicts)), "suite-a", {"agent": "agent-model", "judge": "judge-model"}, 1,
+                   "abc1234", [scenario([{"customer": "Late?"}])])
+    (tmp_path / "reports").mkdir()
+    (tmp_path / "reports" / "2026-01-02T100000Z.json").write_text(json.dumps(saved))
+    read = ReportStore(tmp_path).get("2026-01-02T100000Z")
+    assert read is not None and read.commit == "abc1234" and read.counts.judged == 1
+    assert read.turns[0].judgement.verdicts["focused"].reason == "why"
+    assert [item.id for item in read.scenarios] == [saved["scenarios"][0]["id"]]

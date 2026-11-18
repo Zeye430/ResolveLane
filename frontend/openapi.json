@@ -462,6 +462,438 @@
     "title": "ErrorResponse",
     "type": "object"
    },
+   "EvalCheckView": {
+    "properties": {
+     "detail": {
+      "title": "Detail",
+      "type": "string"
+     },
+     "name": {
+      "title": "Name",
+      "type": "string"
+     },
+     "passed": {
+      "title": "Passed",
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "name",
+     "passed",
+     "detail"
+    ],
+    "title": "EvalCheckView",
+    "type": "object"
+   },
+   "EvalCountsView": {
+    "properties": {
+     "checks": {
+      "description": "Code checks made on them",
+      "title": "Checks",
+      "type": "integer"
+     },
+     "judge_failures": {
+      "description": "Replies the judge gave no valid answer for",
+      "title": "Judge Failures",
+      "type": "integer"
+     },
+     "judged": {
+      "description": "Replies the judge scored",
+      "title": "Judged",
+      "type": "integer"
+     },
+     "turns": {
+      "description": "Assistant replies evaluated",
+      "title": "Turns",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "turns",
+     "checks",
+     "judged",
+     "judge_failures"
+    ],
+    "title": "EvalCountsView",
+    "type": "object"
+   },
+   "EvalJudgementView": {
+    "properties": {
+     "error": {
+      "description": "Why the judge gave no valid answer; verdicts is then empty",
+      "title": "Error",
+      "type": "string"
+     },
+     "verdicts": {
+      "additionalProperties": {
+       "$ref": "#/components/schemas/EvalVerdictView"
+      },
+      "title": "Verdicts",
+      "type": "object"
+     }
+    },
+    "required": [
+     "verdicts",
+     "error"
+    ],
+    "title": "EvalJudgementView",
+    "type": "object"
+   },
+   "EvalModelsView": {
+    "properties": {
+     "agent": {
+      "title": "Agent",
+      "type": "string"
+     },
+     "judge": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "None when the run had no judge",
+      "title": "Judge"
+     }
+    },
+    "required": [
+     "agent",
+     "judge"
+    ],
+    "title": "EvalModelsView",
+    "type": "object"
+   },
+   "EvalReportListView": {
+    "properties": {
+     "baseline": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/EvalRunView"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "reports": {
+      "description": "Saved runs, newest first",
+      "items": {
+       "$ref": "#/components/schemas/EvalRunView"
+      },
+      "title": "Reports",
+      "type": "array"
+     },
+     "tolerance": {
+      "description": "How far a pass rate may fall below the baseline before it is a regression",
+      "title": "Tolerance",
+      "type": "number"
+     },
+     "unreadable": {
+      "description": "Report files that could not be read",
+      "title": "Unreadable",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "reports",
+     "baseline",
+     "tolerance",
+     "unreadable"
+    ],
+    "title": "EvalReportListView",
+    "type": "object"
+   },
+   "EvalReportView": {
+    "properties": {
+     "commit": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "The application's git commit, when recorded",
+      "title": "Commit"
+     },
+     "counts": {
+      "$ref": "#/components/schemas/EvalCountsView"
+     },
+     "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+     },
+     "fallbacks": {
+      "additionalProperties": {
+       "type": "integer"
+      },
+      "description": "Rule-based replies, by why the agent's reply was not sent",
+      "title": "Fallbacks",
+      "type": "object"
+     },
+     "metrics": {
+      "additionalProperties": {
+       "type": "number"
+      },
+      "description": "Pass rates from 0 to 1, by metric name",
+      "title": "Metrics",
+      "type": "object"
+     },
+     "models": {
+      "$ref": "#/components/schemas/EvalModelsView"
+     },
+     "repeat": {
+      "description": "How many times each scenario ran",
+      "title": "Repeat",
+      "type": "integer"
+     },
+     "report_id": {
+      "description": "The report's name, or baseline for the saved baseline",
+      "title": "Report Id",
+      "type": "string"
+     },
+     "scenarios": {
+      "default": [],
+      "description": "The scenarios' descriptions, when recorded",
+      "items": {
+       "$ref": "#/components/schemas/EvalScenarioView"
+      },
+      "title": "Scenarios",
+      "type": "array"
+     },
+     "seconds": {
+      "$ref": "#/components/schemas/EvalSecondsView"
+     },
+     "suite_id": {
+      "description": "Hash of the scenarios, judge instructions and models; runs are comparable only with the same suite",
+      "title": "Suite Id",
+      "type": "string"
+     },
+     "turns": {
+      "items": {
+       "$ref": "#/components/schemas/EvalTurnView"
+      },
+      "title": "Turns",
+      "type": "array"
+     }
+    },
+    "required": [
+     "report_id",
+     "suite_id",
+     "created_at",
+     "models",
+     "repeat",
+     "metrics",
+     "counts",
+     "fallbacks",
+     "seconds",
+     "turns"
+    ],
+    "title": "EvalReportView",
+    "type": "object"
+   },
+   "EvalRunView": {
+    "description": "One saved evaluation run, without its replies.",
+    "properties": {
+     "commit": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "The application's git commit, when recorded",
+      "title": "Commit"
+     },
+     "counts": {
+      "$ref": "#/components/schemas/EvalCountsView"
+     },
+     "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+     },
+     "fallbacks": {
+      "additionalProperties": {
+       "type": "integer"
+      },
+      "description": "Rule-based replies, by why the agent's reply was not sent",
+      "title": "Fallbacks",
+      "type": "object"
+     },
+     "metrics": {
+      "additionalProperties": {
+       "type": "number"
+      },
+      "description": "Pass rates from 0 to 1, by metric name",
+      "title": "Metrics",
+      "type": "object"
+     },
+     "models": {
+      "$ref": "#/components/schemas/EvalModelsView"
+     },
+     "repeat": {
+      "description": "How many times each scenario ran",
+      "title": "Repeat",
+      "type": "integer"
+     },
+     "report_id": {
+      "description": "The report's name, or baseline for the saved baseline",
+      "title": "Report Id",
+      "type": "string"
+     },
+     "seconds": {
+      "$ref": "#/components/schemas/EvalSecondsView"
+     },
+     "suite_id": {
+      "description": "Hash of the scenarios, judge instructions and models; runs are comparable only with the same suite",
+      "title": "Suite Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "report_id",
+     "suite_id",
+     "created_at",
+     "models",
+     "repeat",
+     "metrics",
+     "counts",
+     "fallbacks",
+     "seconds"
+    ],
+    "title": "EvalRunView",
+    "type": "object"
+   },
+   "EvalScenarioView": {
+    "properties": {
+     "description": {
+      "title": "Description",
+      "type": "string"
+     },
+     "id": {
+      "title": "Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "id",
+     "description"
+    ],
+    "title": "EvalScenarioView",
+    "type": "object"
+   },
+   "EvalSecondsView": {
+    "properties": {
+     "mean": {
+      "title": "Mean",
+      "type": "number"
+     },
+     "p95": {
+      "title": "P95",
+      "type": "number"
+     }
+    },
+    "required": [
+     "mean",
+     "p95"
+    ],
+    "title": "EvalSecondsView",
+    "type": "object"
+   },
+   "EvalTurnView": {
+    "description": "One customer message of a scenario and the assistant's reply, as checked and judged.",
+    "properties": {
+     "checks": {
+      "items": {
+       "$ref": "#/components/schemas/EvalCheckView"
+      },
+      "title": "Checks",
+      "type": "array"
+     },
+     "fallback": {
+      "title": "Fallback",
+      "type": "string"
+     },
+     "judgement": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/EvalJudgementView"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "message": {
+      "title": "Message",
+      "type": "string"
+     },
+     "reply": {
+      "title": "Reply",
+      "type": "string"
+     },
+     "run": {
+      "title": "Run",
+      "type": "integer"
+     },
+     "scenario": {
+      "title": "Scenario",
+      "type": "string"
+     },
+     "seconds": {
+      "title": "Seconds",
+      "type": "number"
+     },
+     "step": {
+      "description": "The step's number in the scenario, from 1",
+      "title": "Step",
+      "type": "integer"
+     },
+     "written_by_agent": {
+      "title": "Written By Agent",
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "scenario",
+     "run",
+     "step",
+     "message",
+     "reply",
+     "written_by_agent",
+     "fallback",
+     "seconds",
+     "checks",
+     "judgement"
+    ],
+    "title": "EvalTurnView",
+    "type": "object"
+   },
+   "EvalVerdictView": {
+    "properties": {
+     "passed": {
+      "title": "Passed",
+      "type": "boolean"
+     },
+     "reason": {
+      "title": "Reason",
+      "type": "string"
+     }
+    },
+    "required": [
+     "passed",
+     "reason"
+    ],
+    "title": "EvalVerdictView",
+    "type": "object"
+   },
    "HTTPValidationError": {
     "properties": {
      "detail": {
@@ -1825,6 +2257,120 @@
     "summary": "Send a support message, starting a new case or continuing an existing one",
     "tags": [
      "Chat"
+    ]
+   }
+  },
+  "/api/v1/evaluation/reports": {
+   "get": {
+    "operationId": "list_evaluation_reports_api_v1_evaluation_reports_get",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/EvalReportListView"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "401": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      },
+      "description": "Unauthorized"
+     },
+     "403": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      },
+      "description": "Forbidden"
+     }
+    },
+    "summary": "Saved evaluation runs, newest first, and the baseline",
+    "tags": [
+     "Evaluation"
+    ]
+   }
+  },
+  "/api/v1/evaluation/reports/{report_id}": {
+   "get": {
+    "operationId": "read_evaluation_report_api_v1_evaluation_reports__report_id__get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "report_id",
+      "required": true,
+      "schema": {
+       "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{6}Z$",
+       "title": "Report Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/EvalReportView"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "401": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      },
+      "description": "Unauthorized"
+     },
+     "403": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      },
+      "description": "Forbidden"
+     },
+     "404": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      },
+      "description": "Not Found"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "One evaluation run with every reply, its checks and the judge's reasons",
+    "tags": [
+     "Evaluation"
     ]
    }
   },

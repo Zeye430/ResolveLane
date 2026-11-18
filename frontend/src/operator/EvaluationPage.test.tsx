@@ -1,0 +1,46 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type { Api } from "../api/client";
+import type { EvalReportList } from "../api/types";
+import { EvaluationPage } from "./EvaluationPage";
+import { report, run } from "./fixtures";
+
+afterEach(cleanup);
+
+function show(list: EvalReportList) {
+  const api = {
+    evaluationReports: vi.fn(async () => list),
+    evaluationReport: vi.fn(async (id: string) => report(list.reports.find((item) => item.report_id === id)!)),
+  };
+  render(<QueryClientProvider client={new QueryClient()}><EvaluationPage api={api as unknown as Api} /></QueryClientProvider>);
+  return api;
+}
+
+const before = run("2026-01-01T10:00:00Z", { judge_focused: 0.227, judge_grounded: 1 });
+const latest = run("2026-01-02T10:00:00Z", { judge_focused: 0.636, judge_grounded: 0.864 });
+
+describe("EvaluationPage", () => {
+  it("compares the newest run with the baseline and shows the regression", async () => {
+    show({ reports: [latest, before], baseline: before, tolerance: 0.1, unreadable: 0 });
+    expect(await screen.findByText("1 regression")).toBeInTheDocument();
+    const focused = screen.getByText("Focused").closest("tr")!;
+    expect(within(focused).getByText("+41 pts improved")).toBeInTheDocument();
+    expect(within(focused).getByText("14/22")).toBeInTheDocument();
+    expect(within(screen.getByText("Grounded").closest("tr")!).getByText(/regression/)).toBeInTheDocument();
+  });
+
+  it("shows the judge's reason for a failed reply", async () => {
+    show({ reports: [latest], baseline: null, tolerance: 0.1, unreadable: 0 });
+    expect(await screen.findByText(/No earlier run of this suite/)).toBeInTheDocument();
+    fireEvent.click(await screen.findByText("late-delivery"));
+    expect(screen.getByText(/Adds a fee rule\./)).toBeInTheDocument();
+    expect(screen.getByText("Scenarios (1 of 2 with failures)")).toBeInTheDocument();
+  });
+
+  it("explains how to make the first run", async () => {
+    show({ reports: [], baseline: null, tolerance: 0.1, unreadable: 1 });
+    expect(await screen.findByText("python -m resolvelane.evaluation")).toBeInTheDocument();
+    expect(screen.getByText("1 report file could not be read.")).toBeInTheDocument();
+  });
+});

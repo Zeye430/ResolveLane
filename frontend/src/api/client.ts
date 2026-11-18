@@ -1,6 +1,6 @@
 import type {
   CaseListEntry, CaseStatus, ChatRequest, ChatResponse, CustomerCase, Order, Principal, QueuePage,
-  RefundAction, SupportAction, SupportCase,
+  EvalReport, EvalReportList, RefundAction, SupportAction, SupportCase,
 } from "./types";
 
 /** A response the server refused, with its status and the server's explanation. */
@@ -105,4 +105,9 @@ export class Api {
   rejectRefund = (refundId: string, version: number, note: string, key?: string) =>
     this.write<RefundAction>(`/api/v1/support/refunds/${encodeURIComponent(refundId)}/rejection`, { version, note },
                              key);
+
+  // operators
+  evaluationReports = () => this.get<EvalReportList>("/api/v1/evaluation/reports");
+  evaluationReport = (reportId: string) =>
+    this.get<EvalReport>(`/api/v1/evaluation/reports/${encodeURIComponent(reportId)}`);
 }

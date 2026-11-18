@@ -54,11 +54,13 @@ python -m resolvelane.evaluation --calibrate     # the judge against human label
 
 The judge is checked before it is trusted: `evals/judge_calibration.json` holds replies labeled by a person, and `--calibrate` reports agreement and false passes per criterion. The judge sees the same facts, conversation, cited passages, actions and rule-based reply as the reply agent, treats them as data, and is asked again once if its answer is invalid; a judge failure is reported apart, never as a pass or a fail. `RESOLVELANE_JUDGE_MODEL` sets the judge model, by default the reply model; a different, stronger judge avoids a model favouring its own writing.
 
-Each run writes a report to `evals/reports/` (ignored by git) and is compared with `evals/baseline.json` when both ran the same scenarios, judge and models. A metric more than 0.1 below the baseline is a regression and makes the command exit with status 1, so the suite can gate a change to prompts, skills or models. `--save-baseline` makes a full run the new baseline.
+Each run writes a report to `evals/reports/` (ignored by git) and is compared with `evals/baseline.json` when both ran the same scenarios, judge and models. A metric more than 0.1 below the baseline is a regression and makes the command exit with status 1, so the suite can gate a change to prompts, skills or models. `--save-baseline` makes a full run the new baseline. A report also records the git commit of the code that ran (marked `-dirty` when files had changed) and the scenarios' descriptions.
+
+Operators read the saved runs in the web interface (below) or through `GET /api/v1/evaluation/reports` and `GET /api/v1/evaluation/reports/{report_id}`; `RESOLVELANE_EVALS` points the server at another `evals` directory. A report file that cannot be read is counted, not shown.
 
 ## Web interface
 
-`frontend/` is a React and TypeScript application for the two people in a case: the customer, who reports a problem and follows their refund, and the support agent, who works through the review queue, checks the order record and approves or rejects a refund proposal. Node.js 20 or newer is required.
+`frontend/` is a React and TypeScript application for the two people in a case: the customer, who reports a problem and follows their refund, and the support agent, who works through the review queue, checks the order record and approves or rejects a refund proposal. Operators get the evaluation page. Node.js 20 or newer is required.
 
 ```bash
 cd frontend
@@ -70,6 +72,7 @@ The development server forwards `/api` to the API (set `RESOLVELANE_API_URL`, fo
 
 - The customer sees their orders and conversations, writes to the assistant, and sees an approved refund move from processing to sent. Nothing internal is shown: no review notes, proposals or payment details.
 - The support agent sees the queue by status and, for a case, the conversation with who wrote each message and which help center sections replies cited, how each assistant reply came about (below), why it needs review, the order record with how late it was delivered, each refund proposal with its versions and the amount priced by the server, and the payment with its attempts. Approving names the version on screen; if the proposal changed meanwhile, the server refuses (`409`) and the card shows the current version.
+- The operator sees the saved evaluation runs. For a run: its suite, models, commit and sample sizes; each metric with its passed count and 95% interval (Wilson), so a rate from 22 replies is not read as more precise than it is; the change against the baseline or an earlier run of the same suite, with the command line's regression rule; and every scenario's replies with each code check and the judge's verdict and reason, failures first. Runs of different suites are not compared, since their differences would not come from the code.
 - Screens poll for changes every few seconds while visible, so an agent's decision and a sent refund appear without a reload.
 - Every write carries an `Idempotency-Key`. When the connection drops before a response arrives, the request is sent again with the same key, so it is applied at most once; a response the server did send is never retried. Requests time out (15 seconds for reads, 90 for a chat message, which waits for the model) with a message and a way to try again; trying the same write again reuses its key, because a request that timed out may still have been applied.
 

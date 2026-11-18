@@ -17,6 +17,7 @@ import argparse
 import json
 import logging
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -29,7 +30,8 @@ os.environ.pop("RESOLVELANE_MCP_CONFIG", None)  # scenarios do not depend on ext
 import anthropic  # noqa: E402
 
 from resolvelane.evaluation.judge import CRITERIA, Judge, Material  # noqa: E402
-from resolvelane.evaluation.runner import Evaluation, compare, load_report, report, suite_id  # noqa: E402
+from resolvelane.evaluation.reports import EVALS, compare, load_report, report_id  # noqa: E402
+from resolvelane.evaluation.runner import Evaluation, report, suite_id  # noqa: E402
 from resolvelane.evaluation.scenarios import DEFAULT_SCENARIOS, Suite, load_suite  # noqa: E402
 from resolvelane.knowledge import HelpCenter  # noqa: E402
 from resolvelane.llm import DEFAULT_BASE_URL, load_llm_provider  # noqa: E402
@@ -40,7 +42,6 @@ from resolvelane.simulator.help_center import ARTICLES  # noqa: E402
 from resolvelane.skills import load_skills  # noqa: E402
 from resolvelane.tools import ToolGateway  # noqa: E402
 
-EVALS = DEFAULT_SCENARIOS.parent
 BASELINE = EVALS / "baseline.json"
 CALIBRATION = EVALS / "judge_calibration.json"
 
@@ -52,6 +53,18 @@ def _judge(environ) -> Judge:
     model = (environ.get("RESOLVELANE_JUDGE_MODEL", "").strip() or environ.get("ANTHROPIC_MODEL", "").strip()
              or "claude-opus-5-5")
     return Judge(client, model)
+
+
+def _commit() -> str | None:
+    """The application's git commit, marked dirty when files have changed since it."""
+    try:
+        result = subprocess.run(["git", "describe", "--always", "--dirty", "--exclude", "*"], cwd=EVALS.parent,
+                                capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip() or None
 
 
 def calibrate(judge: Judge, path: Path = CALIBRATION) -> int:
@@ -124,7 +137,8 @@ def main(argv=None) -> int:
     models = {"agent": llm.model, "judge": judge.model if judge else None}
     full_suite = not args.only and args.scenarios == DEFAULT_SCENARIOS
     current = report(results, suite_id(text if full_suite else json.dumps(suite.model_dump(mode="json")),
-                                       llm.model, models["judge"]), models, args.repeat)
+                                       llm.model, models["judge"]), models, args.repeat, _commit(),
+                     suite.scenarios)
     summary = current["summary"]
 
     print("\nMetrics:")
@@ -143,7 +157,7 @@ def main(argv=None) -> int:
 
     reports = EVALS / "reports"
     reports.mkdir(exist_ok=True)
-    path = reports / f"{current['created_at'].replace(':', '')}.json"
+    path = reports / f"{report_id(current['created_at'])}.json"
     path.write_text(json.dumps(current, indent=1))
     print(f"\nReport: {path}")
 
@@ -159,7 +173,7 @@ def main(argv=None) -> int:
         if not full_suite:
             print("A baseline is saved only from the full suite.", file=sys.stderr)
             return 2
-        BASELINE.write_text(json.dumps({key: current[key] for key in ("suite_id", "models", "repeat",
+        BASELINE.write_text(json.dumps({key: current[key] for key in ("suite_id", "models", "repeat", "commit",
                                                                        "created_at", "summary")}, indent=1))
         print(f"Saved as the baseline: {BASELINE}")
     return 1 if regressions else 0

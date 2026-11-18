@@ -55,6 +55,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/evaluation/reports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Saved evaluation runs, newest first, and the baseline */
+        get: operations["list_evaluation_reports_api_v1_evaluation_reports_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/evaluation/reports/{report_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One evaluation run with every reply, its checks and the judge's reasons */
+        get: operations["read_evaluation_report_api_v1_evaluation_reports__report_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/me": {
         parameters: {
             query?: never;
@@ -468,6 +502,229 @@ export interface components {
         ErrorResponse: {
             /** Detail */
             detail: string;
+        };
+        /** EvalCheckView */
+        EvalCheckView: {
+            /** Detail */
+            detail: string;
+            /** Name */
+            name: string;
+            /** Passed */
+            passed: boolean;
+        };
+        /** EvalCountsView */
+        EvalCountsView: {
+            /**
+             * Checks
+             * @description Code checks made on them
+             */
+            checks: number;
+            /**
+             * Judge Failures
+             * @description Replies the judge gave no valid answer for
+             */
+            judge_failures: number;
+            /**
+             * Judged
+             * @description Replies the judge scored
+             */
+            judged: number;
+            /**
+             * Turns
+             * @description Assistant replies evaluated
+             */
+            turns: number;
+        };
+        /** EvalJudgementView */
+        EvalJudgementView: {
+            /**
+             * Error
+             * @description Why the judge gave no valid answer; verdicts is then empty
+             */
+            error: string;
+            /** Verdicts */
+            verdicts: {
+                [key: string]: components["schemas"]["EvalVerdictView"];
+            };
+        };
+        /** EvalModelsView */
+        EvalModelsView: {
+            /** Agent */
+            agent: string;
+            /**
+             * Judge
+             * @description None when the run had no judge
+             */
+            judge: string | null;
+        };
+        /** EvalReportListView */
+        EvalReportListView: {
+            baseline: components["schemas"]["EvalRunView"] | null;
+            /**
+             * Reports
+             * @description Saved runs, newest first
+             */
+            reports: components["schemas"]["EvalRunView"][];
+            /**
+             * Tolerance
+             * @description How far a pass rate may fall below the baseline before it is a regression
+             */
+            tolerance: number;
+            /**
+             * Unreadable
+             * @description Report files that could not be read
+             */
+            unreadable: number;
+        };
+        /** EvalReportView */
+        EvalReportView: {
+            /**
+             * Commit
+             * @description The application's git commit, when recorded
+             */
+            commit?: string | null;
+            counts: components["schemas"]["EvalCountsView"];
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Fallbacks
+             * @description Rule-based replies, by why the agent's reply was not sent
+             */
+            fallbacks: {
+                [key: string]: number;
+            };
+            /**
+             * Metrics
+             * @description Pass rates from 0 to 1, by metric name
+             */
+            metrics: {
+                [key: string]: number;
+            };
+            models: components["schemas"]["EvalModelsView"];
+            /**
+             * Repeat
+             * @description How many times each scenario ran
+             */
+            repeat: number;
+            /**
+             * Report Id
+             * @description The report's name, or baseline for the saved baseline
+             */
+            report_id: string;
+            /**
+             * Scenarios
+             * @description The scenarios' descriptions, when recorded
+             * @default []
+             */
+            scenarios: components["schemas"]["EvalScenarioView"][];
+            seconds: components["schemas"]["EvalSecondsView"];
+            /**
+             * Suite Id
+             * @description Hash of the scenarios, judge instructions and models; runs are comparable only with the same suite
+             */
+            suite_id: string;
+            /** Turns */
+            turns: components["schemas"]["EvalTurnView"][];
+        };
+        /**
+         * EvalRunView
+         * @description One saved evaluation run, without its replies.
+         */
+        EvalRunView: {
+            /**
+             * Commit
+             * @description The application's git commit, when recorded
+             */
+            commit?: string | null;
+            counts: components["schemas"]["EvalCountsView"];
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Fallbacks
+             * @description Rule-based replies, by why the agent's reply was not sent
+             */
+            fallbacks: {
+                [key: string]: number;
+            };
+            /**
+             * Metrics
+             * @description Pass rates from 0 to 1, by metric name
+             */
+            metrics: {
+                [key: string]: number;
+            };
+            models: components["schemas"]["EvalModelsView"];
+            /**
+             * Repeat
+             * @description How many times each scenario ran
+             */
+            repeat: number;
+            /**
+             * Report Id
+             * @description The report's name, or baseline for the saved baseline
+             */
+            report_id: string;
+            seconds: components["schemas"]["EvalSecondsView"];
+            /**
+             * Suite Id
+             * @description Hash of the scenarios, judge instructions and models; runs are comparable only with the same suite
+             */
+            suite_id: string;
+        };
+        /** EvalScenarioView */
+        EvalScenarioView: {
+            /** Description */
+            description: string;
+            /** Id */
+            id: string;
+        };
+        /** EvalSecondsView */
+        EvalSecondsView: {
+            /** Mean */
+            mean: number;
+            /** P95 */
+            p95: number;
+        };
+        /**
+         * EvalTurnView
+         * @description One customer message of a scenario and the assistant's reply, as checked and judged.
+         */
+        EvalTurnView: {
+            /** Checks */
+            checks: components["schemas"]["EvalCheckView"][];
+            /** Fallback */
+            fallback: string;
+            judgement: components["schemas"]["EvalJudgementView"] | null;
+            /** Message */
+            message: string;
+            /** Reply */
+            reply: string;
+            /** Run */
+            run: number;
+            /** Scenario */
+            scenario: string;
+            /** Seconds */
+            seconds: number;
+            /**
+             * Step
+             * @description The step's number in the scenario, from 1
+             */
+            step: number;
+            /** Written By Agent */
+            written_by_agent: boolean;
+        };
+        /** EvalVerdictView */
+        EvalVerdictView: {
+            /** Passed */
+            passed: boolean;
+            /** Reason */
+            reason: string;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -1126,6 +1383,102 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    list_evaluation_reports_api_v1_evaluation_reports_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvalReportListView"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    read_evaluation_report_api_v1_evaluation_reports__report_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                report_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvalReportView"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

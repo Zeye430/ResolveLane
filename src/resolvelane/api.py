@@ -24,9 +24,11 @@ from resolvelane.recognition import IssueRecognizer, load_local_embedder, load_r
 from resolvelane.reply_agent import ReplyAgent, load_reply_agent
 from resolvelane.domain.case import Case, CaseStatus
 from resolvelane.domain.refund import PaymentStatus, RefundStatus
+from resolvelane.evaluation.reports import REGRESSION_TOLERANCE, REPORT_ID, ReportStore, load_report_store
 from resolvelane.refunds import RefundInvalid, RefundProposal, payment_state
 from resolvelane.schemas import (CaseListView, CaseView, ChatRequest, ChatResponse, CitationView, CustomerOrderView,
-                                 CustomerRefundView, ErrorResponse, OrderListView, PrincipalView, QueuePageView, RefundActionResponse,
+                                 CustomerRefundView, ErrorResponse, EvalReportListView,
+                                 EvalReportView, OrderListView, PrincipalView, QueuePageView, RefundActionResponse,
                                  RefundDecisionRequest, RefundProposalRequest, RefundRejectionRequest,
                                  RefundRevisionRequest, ResolveRequest, SupportActionResponse, SupportCaseView,
                                  SupportReplyRequest)
@@ -107,7 +109,8 @@ def _proposal(body: RefundProposalRequest) -> RefundProposal:
 
 def create_app(token_registry: TokenRegistry | None = None, order_source: OrderSource | None = None,
                case_store: CaseStore | None = None, recognizer: IssueRecognizer | None = None,
-               reply_agent: ReplyAgent | None = None, payment_provider: PaymentProvider | None = None) -> FastAPI:
+               reply_agent: ReplyAgent | None = None, payment_provider: PaymentProvider | None = None,
+               evaluation_reports: ReportStore | None = None) -> FastAPI:
     owned_store = load_case_store() if case_store is None else None
 
     @asynccontextmanager
@@ -141,6 +144,7 @@ def create_app(token_registry: TokenRegistry | None = None, order_source: OrderS
     app.state.summaries = load_summary_queue(getattr(app.state.reply_agent, "llm", None), app.state.case_store)
     app.state.payment_provider = payment_provider if payment_provider is not None else load_payment_provider()
     app.state.payments = load_payment_dispatcher(app.state.case_store, app.state.payment_provider)
+    app.state.evaluation_reports = evaluation_reports if evaluation_reports is not None else load_report_store()
 
     @app.middleware("http")
     async def measure(request: Request, call_next):
@@ -431,6 +435,28 @@ def create_app(token_registry: TokenRegistry | None = None, order_source: OrderS
     ) -> RefundActionResponse:
         return _refund_action(support_desk.reject_refund, request, response, principal.subject_id, refund_id,
                               body.version, body.note, idempotency_key)
+
+    @app.get("/api/v1/evaluation/reports", response_model=EvalReportListView, tags=["Evaluation"],
+             summary="Saved evaluation runs, newest first, and the baseline",
+             responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}})
+    def list_evaluation_reports(principal: Annotated[Principal, Depends(require_operator)],
+                                request: Request) -> EvalReportListView:
+        store = request.app.state.evaluation_reports
+        runs, unreadable = store.runs()
+        return EvalReportListView(reports=runs, baseline=store.baseline(), tolerance=REGRESSION_TOLERANCE,
+                                  unreadable=unreadable)
+
+    @app.get("/api/v1/evaluation/reports/{report_id}", response_model=EvalReportView, tags=["Evaluation"],
+             summary="One evaluation run with every reply, its checks and the judge's reasons",
+             responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse},
+                        404: {"model": ErrorResponse}})
+    def read_evaluation_report(report_id: Annotated[str, Path(pattern=REPORT_ID)],
+                               principal: Annotated[Principal, Depends(require_operator)],
+                               request: Request) -> EvalReportView:
+        found = request.app.state.evaluation_reports.get(report_id)
+        if found is None:
+            raise HTTPException(404, "Evaluation report not found")
+        return found
 
     return app
 

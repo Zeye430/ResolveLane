@@ -23,3 +23,7 @@ export type Payment = Schemas["PaymentView"];
 export type RefundAction = Schemas["RefundActionResponse"];
 export type SupportAction = Schemas["SupportActionResponse"];
 export type ReplyTrace = Schemas["ReplyTraceView"];
+export type EvalRun = Schemas["EvalRunView"];
+export type EvalReport = Schemas["EvalReportView"];
+export type EvalReportList = Schemas["EvalReportListView"];
+export type EvalTurn = Schemas["EvalTurnView"];

@@ -19,7 +19,6 @@ import time
 from collections import Counter
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
-from pathlib import Path
 
 import httpx
 
@@ -28,6 +27,7 @@ from resolvelane.api import create_app
 from resolvelane.case_store import CaseStore
 from resolvelane.evaluation import judge as judge_module
 from resolvelane.evaluation.judge import Judgement, Material
+from resolvelane.evaluation.reports import compare, load_report  # noqa: F401  (also used from here)
 from resolvelane.evaluation.scenarios import Scenario, Step, Suite
 from resolvelane.payments import send_due
 from resolvelane.refunds import open_refund
@@ -42,7 +42,6 @@ AGENT_ID = "eval-agent-901"
 # Invented credentials, valid only inside one evaluation run.
 TOKENS = {f"eval-token-{customer}-xxxxxxxxxxxx": {"subject_id": customer, "role": "customer"}
           for customer in ("demo-customer-101", "demo-customer-102", "demo-customer-103", "demo-customer-104")}
-REGRESSION_TOLERANCE = 0.1  # pass rates may vary by this much between runs before it counts
 
 
 class RecordingAgent:
@@ -279,25 +278,11 @@ def _rate(passed: int, total: int) -> float:
     return round(passed / total, 3) if total else 1.0
 
 
-def compare(current: dict, baseline: dict | None) -> list[str]:
-    """Metrics that fell by more than the tolerance since a baseline of the same suite."""
-    if baseline is None or baseline.get("suite_id") != current["suite_id"]:
-        return []
-    regressions = []
-    for name, value in current["summary"]["metrics"].items():
-        before = baseline["summary"]["metrics"].get(name)
-        if before is not None and value < before - REGRESSION_TOLERANCE:
-            regressions.append(f"{name}: {before:.3f} -> {value:.3f}")
-    return regressions
-
-
-def report(results: Sequence[TurnResult], suite: str, models: dict, repeat: int) -> dict:
-    return {"suite_id": suite, "models": models, "repeat": repeat,
+def report(results: Sequence[TurnResult], suite: str, models: dict, repeat: int, commit: str | None = None,
+           scenarios: Sequence[Scenario] = ()) -> dict:
+    return {"suite_id": suite, "models": models, "repeat": repeat, "commit": commit,
             "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "summary": summarize(results),
+            "scenarios": [{"id": scenario.id, "description": scenario.description} for scenario in scenarios],
             "turns": [{**asdict(result), "judgement": asdict(result.judgement) if result.judgement else None}
                       for result in results]}
-
-
-def load_report(path: Path) -> dict | None:
-    return json.loads(path.read_text()) if path.exists() else None

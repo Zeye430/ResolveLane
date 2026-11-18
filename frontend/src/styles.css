@@ -87,6 +87,7 @@ textarea { resize: vertical; }
 .layout { display: grid; gap: 12px; padding: 12px; align-items: start; }
 .layout-customer { grid-template-columns: 280px minmax(0, 1fr) 300px; }
 .layout-support { grid-template-columns: 300px minmax(0, 1fr) 380px; }
+.layout-operator { grid-template-columns: 280px minmax(0, 1fr); }
 .sidebar, .main { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
 /* Layouts follow the width of their own area, not the window, so the same screens fit a full
    window and one half of the side-by-side demo. */
@@ -96,9 +97,10 @@ textarea { resize: vertical; }
   .layout-customer .main { order: -1; } /* in a narrow area the conversation comes first */
   .layout-support { grid-template-columns: 220px minmax(0, 1fr); }
   .layout-support .evidence { grid-column: 2; }
+  .layout-operator { grid-template-columns: 220px minmax(0, 1fr); }
 }
 @container (max-width: 640px) {
-  .layout-support { grid-template-columns: minmax(0, 1fr); }
+  .layout-support, .layout-operator { grid-template-columns: minmax(0, 1fr); }
   .layout-support .evidence { grid-column: auto; }
 }
 
@@ -184,3 +186,27 @@ select { font: inherit; color: inherit; background: var(--surface); border: 1px 
 .signin { max-width: 480px; margin: 48px auto; padding: 0 16px; display: flex; flex-direction: column; gap: 14px; }
 .accounts { list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .accounts button { width: 100%; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 10px; }
+
+/* evaluation */
+code { font-family: var(--mono); font-size: 12px; background: var(--surface-2); padding: 0 4px; border-radius: 4px; }
+input.checkbox { width: auto; vertical-align: middle; }
+.table-scroll { overflow-x: auto; }
+.metrics td, .metrics th { padding: 5px 6px; white-space: nowrap; }
+.metrics td:first-child { white-space: normal; }
+.metrics tbody tr + tr td { border-top: 1px solid var(--border); }
+.metrics [title] { text-decoration: underline dotted var(--muted); text-underline-offset: 3px; cursor: help; }
+.change { font-weight: 600; }
+.change-regression { color: var(--bad); }
+.change-improved { color: var(--ok); }
+.change-steady { color: var(--muted); font-weight: 400; }
+.scenario { border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; display: flex; flex-direction: column; gap: 8px; }
+.scenario[open] { gap: 8px; }
+.scenario summary { cursor: pointer; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.scenario > p { margin-top: 6px; }
+.turns { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.turn { border-left: 3px solid var(--border); padding: 2px 0 2px 10px; display: flex; flex-direction: column; gap: 4px; }
+.turn-failed { border-left-color: var(--warn); }
+.reply { white-space: pre-wrap; }
+.verdicts { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; font-size: 13px; }
+.verdicts li { display: flex; gap: 6px; align-items: baseline; }
+.verdicts .badge { flex: none; }

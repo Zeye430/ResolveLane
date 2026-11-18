@@ -303,3 +303,87 @@ class RefundActionResponse(BaseModel):
     version: int
     amount_minor: int
     currency: str
+
+
+# --- evaluation reports: operators only ---------------------------------------------
+
+class EvalModelsView(_View):
+    agent: str
+    judge: str | None = Field(description="None when the run had no judge")
+
+
+class EvalCountsView(_View):
+    turns: int = Field(description="Assistant replies evaluated")
+    checks: int = Field(description="Code checks made on them")
+    judged: int = Field(description="Replies the judge scored")
+    judge_failures: int = Field(description="Replies the judge gave no valid answer for")
+
+
+class EvalSecondsView(_View):
+    mean: float
+    p95: float
+
+
+class EvalRunView(_View):
+    """One saved evaluation run, without its replies."""
+
+    report_id: str = Field(description="The report's name, or baseline for the saved baseline")
+    suite_id: str = Field(description="Hash of the scenarios, judge instructions and models; runs are "
+                                      "comparable only with the same suite")
+    created_at: datetime
+    models: EvalModelsView
+    repeat: int = Field(description="How many times each scenario ran")
+    commit: str | None = Field(default=None, description="The application's git commit, when recorded")
+    metrics: dict[str, float] = Field(description="Pass rates from 0 to 1, by metric name")
+    counts: EvalCountsView
+    fallbacks: dict[str, int] = Field(description="Rule-based replies, by why the agent's reply was not sent")
+    seconds: EvalSecondsView
+
+
+class EvalReportListView(BaseModel):
+    reports: list[EvalRunView] = Field(description="Saved runs, newest first")
+    baseline: EvalRunView | None
+    tolerance: float = Field(description="How far a pass rate may fall below the baseline before it is "
+                                         "a regression")
+    unreadable: int = Field(description="Report files that could not be read")
+
+
+class EvalCheckView(_View):
+    name: str
+    passed: bool
+    detail: str
+
+
+class EvalVerdictView(_View):
+    passed: bool
+    reason: str
+
+
+class EvalJudgementView(_View):
+    verdicts: dict[str, EvalVerdictView]
+    error: str = Field(description="Why the judge gave no valid answer; verdicts is then empty")
+
+
+class EvalTurnView(_View):
+    """One customer message of a scenario and the assistant's reply, as checked and judged."""
+
+    scenario: str
+    run: int
+    step: int = Field(description="The step's number in the scenario, from 1")
+    message: str
+    reply: str
+    written_by_agent: bool
+    fallback: str
+    seconds: float
+    checks: list[EvalCheckView]
+    judgement: EvalJudgementView | None
+
+
+class EvalScenarioView(_View):
+    id: str
+    description: str
+
+
+class EvalReportView(EvalRunView):
+    scenarios: list[EvalScenarioView] = Field(default=[], description="The scenarios' descriptions, when recorded")
+    turns: list[EvalTurnView]

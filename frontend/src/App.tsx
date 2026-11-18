@@ -2,6 +2,7 @@ import { QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { Api, ApiError } from "./api/client";
 import { CustomerApp } from "./customer/CustomerApp";
+import { EvaluationPage } from "./operator/EvaluationPage";
 import { newQueryClient } from "./queryClient";
 import { demoAccounts, savedSession, saveSession, type Session } from "./session";
 import { humanize } from "./shared/format";
@@ -80,7 +81,7 @@ function Screen({ token, onSignIn, showIdentity }: {
       {identity}
       {me.data.role === "customer" ? <CustomerApp api={api} />
         : me.data.role === "support_agent" ? <SupportApp api={api} />
-          : <p className="empty muted">Operators read metrics at /metrics; there is no operator screen yet.</p>}
+          : <EvaluationPage api={api} />}
     </>
   );
 }
