@@ -88,8 +88,9 @@ function Screen({ token, onSignIn, showIdentity }: {
 
 function SignIn({ onSignIn }: { onSignIn: (session: Session) => void }) {
   const [pasted, setPasted] = useState("");
-  const customers = demoAccounts.filter((account) => account.role === "customer");
-  const agents = demoAccounts.filter((account) => account.role === "support_agent");
+  const accounts = demoAccounts();
+  const customers = accounts.filter((account) => account.role === "customer");
+  const agents = accounts.filter((account) => account.role === "support_agent");
   const [customer, setCustomer] = useState(customers[0]?.token ?? "");
   const [agent, setAgent] = useState(agents[0]?.token ?? "");
   return (
@@ -117,12 +118,12 @@ function SignIn({ onSignIn }: { onSignIn: (session: Session) => void }) {
           <button type="submit" className="primary">Start side by side</button>
         </form>
       )}
-      {demoAccounts.length > 0 ? (
+      {accounts.length > 0 ? (
         <>
           <h2>One account</h2>
-          <p className="muted">Development accounts from RESOLVELANE_API_TOKENS. Each browser tab keeps its own sign-in.</p>
+          <p className="muted">Demo accounts from RESOLVELANE_API_TOKENS. Each browser tab keeps its own sign-in.</p>
           <ul className="accounts">
-            {demoAccounts.map((account) => (
+            {accounts.map((account) => (
               <li key={account.token}>
                 <button onClick={() => onSignIn({ kind: "single", token: account.token })}>
                   <span className="mono">{account.subject_id}</span>

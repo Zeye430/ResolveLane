@@ -1,0 +1,18 @@
+# Prometheus for `docker compose --profile monitoring up`: scrapes the API's /metrics as the
+# operator and evaluates the alert rules kept with the code. Alertmanager is not part of the
+# demo; firing alerts are shown at http://localhost:9090/alerts.
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+scrape_configs:
+  - job_name: resolvelane
+    metrics_path: /metrics
+    authorization:
+      type: Bearer
+      credentials_file: /tmp/operator-token  # written at start-up from RESOLVELANE_METRICS_TOKEN
+    static_configs:
+      - targets: ["api:8000"]

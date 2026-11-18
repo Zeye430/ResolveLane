@@ -1,4 +1,5 @@
-# Tests, type checks and the production build on every push to main and every pull request.
+# Tests, type checks, the production build and the containers on every push to main and every
+# pull request.
 # Nothing here calls a language model or needs a secret: tests run offline, and the model
 # evaluation (python -m resolvelane.evaluation) is run separately because it costs money.
 name: CI
@@ -67,3 +68,30 @@ jobs:
         run: npm test
       - name: Build
         run: npm run build
+
+  containers:
+    name: Containers
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build
+        # The invented accounts of .env.example and no provider keys, as for a first run.
+        run: |
+          cp .env.example .env
+          docker compose build
+      - name: Start and check
+        run: |
+          docker compose up --detach --wait --wait-timeout 180
+          curl --fail --silent --show-error http://127.0.0.1:8080/health
+          curl --fail --silent --show-error http://127.0.0.1:8080/demo-accounts.json > /dev/null
+          curl --fail --silent --show-error http://127.0.0.1:8080/ | grep --quiet 'id="root"'
+      - name: Logs
+        if: failure()
+        run: docker compose logs
+      - name: Stop
+        if: always()
+        run: docker compose down --volumes
+

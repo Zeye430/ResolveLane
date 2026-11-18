@@ -1,0 +1,19 @@
+# The API image needs pyproject.toml, src/, skills/, evals/ and mcp_servers.example.json.
+.git
+.github
+.venv
+.env
+.pytest_cache
+**/__pycache__
+**/*.py[cod]
+*.egg-info
+build
+dist
+data
+doc
+evals/reports
+frontend
+ops
+scripts
+tests
+.DS_Store

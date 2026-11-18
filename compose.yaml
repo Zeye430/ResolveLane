@@ -1,0 +1,74 @@
+# The API and the web interface:
+#
+#   cp .env.example .env              # once; add a model key there to have replies written by the model
+#   docker compose up --build         # http://localhost:8080
+#   docker compose --profile monitoring up --build    # also Prometheus, at http://localhost:9090
+#
+# Without provider keys, issues are recognized by the local model and keywords and replies are
+# built by rules, so the whole workflow runs offline. Cases are kept in the `data` volume;
+# `docker compose down -v` deletes them. Ports are bound to this machine only.
+name: resolvelane
+
+services:
+  api:
+    build: .
+    image: resolvelane-api
+    env_file: .env
+    environment:
+      # Paths inside the image; these replace any values for the local checkout in .env.
+      RESOLVELANE_DATABASE: /app/data/resolvelane.sqlite3
+      RESOLVELANE_MODEL_CACHE_DIR: /opt/models
+      RESOLVELANE_SKILLS_DIR: /app/skills
+      RESOLVELANE_EVALS: /app/evals
+      # The simulated courier tracking service, run inside the container over MCP stdio.
+      RESOLVELANE_MCP_CONFIG: ${RESOLVELANE_MCP_CONFIG:-mcp_servers.example.json}
+    volumes:
+      - data:/app/data
+      # Evaluation runs saved on this machine (evals/reports is not in git), for the operator page.
+      - ./evals:/app/evals:ro
+    restart: unless-stopped
+
+  web:
+    build: ./frontend
+    image: resolvelane-web
+    environment:
+      # Only the accounts, not the provider keys: the web server needs nothing else from .env.
+      RESOLVELANE_API_TOKENS: ${RESOLVELANE_API_TOKENS:-}
+      # Offers the accounts in the sign-in menu. For a local demo only: anyone who can open the
+      # page can sign in as any of them.
+      RESOLVELANE_DEMO_SIGN_IN: ${RESOLVELANE_DEMO_SIGN_IN:-true}
+    ports:
+      - "127.0.0.1:${RESOLVELANE_WEB_PORT:-8080}:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+  prometheus:
+    profiles: [monitoring]
+    image: prom/prometheus:v3.16.0
+    environment:
+      RESOLVELANE_METRICS_TOKEN: ${RESOLVELANE_METRICS_TOKEN:-}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        if [ -z "$$RESOLVELANE_METRICS_TOKEN" ]; then
+          echo "Set RESOLVELANE_METRICS_TOKEN in .env to the token of an operator account" >&2
+          exit 1
+        fi
+        printf '%s' "$$RESOLVELANE_METRICS_TOKEN" > /tmp/operator-token
+        exec /bin/prometheus --config.file=/etc/prometheus/prometheus.yml --storage.tsdb.path=/prometheus
+    volumes:
+      - ./ops/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./ops/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus:/prometheus
+    ports:
+      - "127.0.0.1:${RESOLVELANE_PROMETHEUS_PORT:-9090}:9090"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  data:
+  prometheus:
