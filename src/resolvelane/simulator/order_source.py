@@ -15,3 +15,7 @@ class InMemoryOrderSource:
 
     def get(self, order_id: str) -> Order | None:
         return self._orders.get(order_id)
+
+    def for_customer(self, customer_id: str) -> list[Order]:
+        orders = [order for order in self._orders.values() if order.customer_id == customer_id]
+        return sorted(orders, key=lambda order: order.estimated_delivery_at, reverse=True)

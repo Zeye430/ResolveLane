@@ -56,6 +56,27 @@ The judge is checked before it is trusted: `evals/judge_calibration.json` holds 
 
 Each run writes a report to `evals/reports/` (ignored by git) and is compared with `evals/baseline.json` when both ran the same scenarios, judge and models. A metric more than 0.1 below the baseline is a regression and makes the command exit with status 1, so the suite can gate a change to prompts, skills or models. `--save-baseline` makes a full run the new baseline.
 
+## Web interface
+
+`frontend/` is a React and TypeScript application for the two people in a case: the customer, who reports a problem and follows their refund, and the support agent, who works through the review queue, checks the order record and approves or rejects a refund proposal. Node.js 20 or newer is required.
+
+```bash
+cd frontend
+npm install
+npm run dev          # http://localhost:5173, with the API running on port 8000
+```
+
+The development server forwards `/api` to the API (set `RESOLVELANE_API_URL`, for example `http://127.0.0.1:8010`, for another port), so the browser sees one origin and the API needs no CORS settings. Its sign-in page offers the development accounts in `RESOLVELANE_API_TOKENS`, read from `../.env` or the shell; `.env.example` lists customers, a support agent and an operator. A production build (`npm run build`) contains no accounts and asks for a token. The sign-in is kept per browser tab. **Side by side** signs in a customer and a support agent in one window, each with their own cache, so a demo shows a report on the left and its decision on the right; each screen lays itself out for the width it has.
+
+- The customer sees their orders and conversations, writes to the assistant, and sees an approved refund move from processing to sent. Nothing internal is shown: no review notes, proposals or payment details.
+- The support agent sees the queue by status and, for a case, the conversation with who wrote each message and which help center sections replies cited, how each assistant reply came about (below), why it needs review, the order record with how late it was delivered, each refund proposal with its versions and the amount priced by the server, and the payment with its attempts. Approving names the version on screen; if the proposal changed meanwhile, the server refuses (`409`) and the card shows the current version.
+- Screens poll for changes every few seconds while visible, so an agent's decision and a sent refund appear without a reload.
+- Every write carries an `Idempotency-Key`. When the connection drops before a response arrives, the request is sent again with the same key, so it is applied at most once; a response the server did send is never retried. Requests time out (15 seconds for reads, 90 for a chat message, which waits for the model) with a message and a way to try again; trying the same write again reuses its key, because a request that timed out may still have been applied.
+
+Each assistant reply is stored with a trace of how it came about, shown to support agents under the reply and never to customers: whether the language model's reply was sent or the rule-based one, and if rules took over, why (for example `ungrounded_number`, `reply_commits_to_an_outcome`, `circuit_open` or `case_changed`); which recognition tier decided the issues; the model, its number of calls, each tool call with its outcome and duration, the handling guides used, the time taken, and whether the reply nearly repeats the previous one. The trace records what happened, not the prompt or the model's raw output. Replies stored before traces existed have none.
+
+The frontend's types are generated from the API's OpenAPI document. After changing an endpoint or a schema, run `python scripts/export_openapi.py` and then `npm run api-types` in `frontend/`; `tests/test_openapi.py` fails while `frontend/openapi.json` differs from the API, so the two cannot drift apart silently. `npm test` runs the frontend's tests and `npm run typecheck` its type check.
+
 ## Delivery examples
 
 The delivery domain includes fictional orders, delivery events, support policies, and customer-report scenarios for development and tests. Customer reports are not verified facts, and expected review paths are test descriptions, not implemented functionality. The examples do not contain real platform records, execute refunds, or represent the policies of an existing marketplace.
@@ -70,7 +91,7 @@ curl -X POST http://127.0.0.1:8000/api/v1/chat \
   -d '{"message": "My order arrived late.", "order_id": "demo-order-1001"}'
 ```
 
-Each conversation is a case. The first message returns a `case_id`; sending it with later messages continues the case. A case remembers its order, so follow-ups need not repeat the order ID, and an issue raised before the order ID is known is answered once it arrives. A case is bound only to an order the customer may access and cannot switch to another order (`409`). Another customer's case returns `404`, the same as an unknown case. `GET /api/v1/cases/{case_id}` returns the case with its messages.
+Each conversation is a case. The first message returns a `case_id`; sending it with later messages continues the case. A case remembers its order, so follow-ups need not repeat the order ID, and an issue raised before the order ID is known is answered once it arrives. A case is bound only to an order the customer may access and cannot switch to another order (`409`). Another customer's case returns `404`, the same as an unknown case. `GET /api/v1/cases/{case_id}` returns the case with its messages, and `GET /api/v1/cases` the caller's cases, newest first.
 
 Late deliveries, delivered-item reports and cancellations without a recorded reason move the case to `needs_review`, as does the assistant when a customer asks for a person; support agents pick it up from their queue (below). When the customer says which items were missing, wrong or damaged, the assistant drafts a refund for a support agent to decide (see Refunds); it never issues or promises one.
 
@@ -182,7 +203,7 @@ What a server says about itself is not trusted:
 - Only tools listed in the configuration are offered, and only if the server marks them read-only; the simulator's `reassign_courier` is never offered, even when listed.
 - The agent sees the description written in the configuration. The server's tool description and the descriptions in its input schema are dropped, so a server cannot add instructions to the agent's tool list.
 - Arguments that identify data are bound in the configuration (`"bind": {"order_id": "order_id"}`): they are filled in from the case's order and are not part of the schema the agent sees, so the agent cannot ask about another customer's order. Only the order or merchant ID can be bound; customer IDs are never sent.
-- A stdio server receives only `PATH`, `HOME` and the variables listed in `env_vars`, never the application's keys. A `streamable_http` server takes its authentication headers from environment variables named in `headers_env`.
+- A stdio server receives only `PATH`, `HOME` and the variables listed in `env_vars`, never the application's keys. A server that is part of this application uses `"command": "{python}"`, which runs it with ResolveLane's own interpreter, so it starts with the application's packages even when the server was started without activating its virtual environment; any other command is looked up on `PATH`. A `streamable_http` server takes its authentication headers from environment variables named in `headers_env`.
 - Results larger than `max_result_chars` are refused; results are labelled as the service's reports and treated as data. Numbers in them count as sourced in the reply's grounding check.
 
 Connections stay open and are reconnected in the background when they fail. Each server has a circuit breaker (two failures pause it for 30 seconds), and while a server is down its tools are not offered; the agent tells the customer it cannot check rather than guessing. When a server announces that its tools changed (protocol version 2026-07-28 subscriptions), the list is read and checked again; for older servers it is read again on reconnection.
@@ -212,7 +233,7 @@ No long-term customer profile (preferences extracted by a model) is kept yet. Wi
 
 `resolvelane.services.order_lookup.lookup_order` provides read-only access to an order only when the requester's customer ID matches the order owner. Lookups of another customer's order are classified internally as denied but presented to customers as not found, so order IDs cannot be probed.
 
-`GET /api/v1/orders/{order_id}` exposes the lookup to customers. The caller is identified only by a bearer token; identity fields in the query string, headers or body are ignored. Denied and unknown orders both return `404 {"detail": "Order not found"}`. Support agents receive `403` because operator access will be scoped to assigned cases, which do not exist yet. Responses omit internal customer and merchant IDs.
+`GET /api/v1/orders/{order_id}` exposes the lookup to customers. The caller is identified only by a bearer token; identity fields in the query string, headers or body are ignored. Denied and unknown orders both return `404 {"detail": "Order not found"}`. `GET /api/v1/orders` lists the caller's own orders. Support agents receive `403` from both: they see an order only as part of a case they open (`order` in the support case view). Responses omit internal customer and merchant IDs. `GET /api/v1/me` tells any caller whose token they hold (subject and role), so a client can show the right screens.
 
 Tokens are configured with `RESOLVELANE_API_TOKENS`, a JSON object mapping each token (at least 24 characters) to a fictional principal:
 

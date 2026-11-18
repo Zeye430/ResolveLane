@@ -17,6 +17,10 @@ class OrderSource(Protocol):
 
     def get(self, order_id: str) -> Order | None: ...
 
+    def for_customer(self, customer_id: str) -> list[Order]:
+        """The customer's orders, newest estimated delivery first."""
+        ...
+
 
 class OrderAccess(str, Enum):
     GRANTED = "granted"

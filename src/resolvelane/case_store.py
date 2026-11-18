@@ -17,12 +17,12 @@ import threading
 import uuid
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from resolvelane.domain.case import (Case, CaseMessage, CaseStatus, CaseSummary, CaseTransition, EarlierCase, Issue,
-                                     MessageRole)
+                                     MessageRole, ReplyTrace, ToolCall)
 from resolvelane.domain.knowledge import Citation
 from resolvelane.domain.refund import Payment, PaymentStatus, Refund, RefundLine, RefundStatus, RefundVersion
 
@@ -154,6 +154,9 @@ MIGRATIONS: tuple[tuple[str, ...], ...] = (
         """CREATE TRIGGER payments_are_kept BEFORE DELETE ON payments
            BEGIN SELECT RAISE(ABORT, 'payments are kept'); END""",
     ),
+    (
+        "ALTER TABLE case_messages ADD COLUMN trace TEXT",  # JSON; replies stored before have none
+    ),
 )
 
 
@@ -164,6 +167,21 @@ def _utc_now() -> datetime:
 def _timestamp(value: datetime) -> str:
     # One fixed format in UTC, so stored timestamps also compare correctly as text.
     return value.astimezone(timezone.utc).isoformat(timespec="microseconds")
+
+
+def _trace_json(trace: ReplyTrace | None) -> str | None:
+    if trace is None:
+        return None
+    return json.dumps({**asdict(trace), "issues": [issue.value for issue in trace.issues]})
+
+
+def _trace(text: str | None) -> ReplyTrace | None:
+    if text is None:
+        return None
+    data = json.loads(text)
+    return ReplyTrace(**{**data, "issues": tuple(Issue(value) for value in data["issues"]),
+                         "tools": tuple(ToolCall(**call) for call in data["tools"]),
+                         "skills": tuple(data["skills"])})
 
 
 @dataclass(frozen=True)
@@ -272,7 +290,7 @@ class CaseStore:
             messages=[CaseMessage(MessageRole(message["role"]), message["text"],
                                   datetime.fromisoformat(message["sent_at"]),
                                   tuple(Citation(**citation) for citation in json.loads(message["citations"])),
-                                  message["author_id"])
+                                  message["author_id"], _trace(message["trace"]))
                       for message in messages],
             review_notes=json.loads(row["review_notes"]),
             status_changed_at=datetime.fromisoformat(row["status_changed_at"]),
@@ -303,10 +321,11 @@ class CaseStore:
             stored = db.execute("SELECT COUNT(*) FROM case_messages WHERE case_id = ?",
                                 (case.case_id,)).fetchone()[0]
             db.executemany(
-                "INSERT INTO case_messages (case_id, seq, role, text, sent_at, citations, author_id) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO case_messages (case_id, seq, role, text, sent_at, citations, author_id, trace) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 [(case.case_id, seq, message.role.value, message.text, _timestamp(message.sent_at),
-                  json.dumps([vars(citation) for citation in message.citations]), message.author_id)
+                  json.dumps([vars(citation) for citation in message.citations]), message.author_id,
+                  _trace_json(message.trace))
                  for seq, message in enumerate(case.messages[stored:], start=stored)])
             recorded = db.execute("SELECT COUNT(*) FROM case_transitions WHERE case_id = ?",
                                   (case.case_id,)).fetchone()[0]

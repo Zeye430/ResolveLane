@@ -3,6 +3,7 @@
 import logging
 import os
 import time
+from datetime import datetime, timezone
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Annotated
@@ -24,8 +25,8 @@ from resolvelane.reply_agent import ReplyAgent, load_reply_agent
 from resolvelane.domain.case import Case, CaseStatus
 from resolvelane.domain.refund import PaymentStatus, RefundStatus
 from resolvelane.refunds import RefundInvalid, RefundProposal, payment_state
-from resolvelane.schemas import (CaseView, ChatRequest, ChatResponse, CitationView, CustomerOrderView,
-                                 CustomerRefundView, ErrorResponse, QueuePageView, RefundActionResponse,
+from resolvelane.schemas import (CaseListView, CaseView, ChatRequest, ChatResponse, CitationView, CustomerOrderView,
+                                 CustomerRefundView, ErrorResponse, OrderListView, PrincipalView, QueuePageView, RefundActionResponse,
                                  RefundDecisionRequest, RefundProposalRequest, RefundRejectionRequest,
                                  RefundRevisionRequest, ResolveRequest, SupportActionResponse, SupportCaseView,
                                  SupportReplyRequest)
@@ -41,6 +42,7 @@ from resolvelane.simulator.order_source import InMemoryOrderSource
 from resolvelane.simulator.payment_provider import load_payment_provider
 
 logger = logging.getLogger("resolvelane.api")
+EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 
 
 class HealthResponse(BaseModel):
@@ -164,6 +166,19 @@ def create_app(token_registry: TokenRegistry | None = None, order_source: OrderS
         store = request.app.state.case_store
         return Response(metrics.exposition(store, store.clock()), media_type=CONTENT_TYPE_LATEST)
 
+    @app.get("/api/v1/me", response_model=PrincipalView, tags=["Access"],
+             summary="Who the bearer token belongs to", responses={401: {"model": ErrorResponse},
+                                                                   503: {"model": ErrorResponse}})
+    def me(principal: Annotated[Principal, Depends(require_principal)]) -> PrincipalView:
+        return PrincipalView(subject_id=principal.subject_id, role=principal.role.value)
+
+    @app.get("/api/v1/orders", response_model=OrderListView, tags=["Orders"],
+             summary="List the caller's simulated orders, newest first",
+             responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}, 503: {"model": ErrorResponse}})
+    def list_orders(principal: Annotated[Principal, Depends(require_customer)], request: Request) -> OrderListView:
+        orders = request.app.state.order_source.for_customer(principal.subject_id)
+        return OrderListView(orders=[CustomerOrderView.model_validate(order) for order in orders])
+
     @app.get(
         "/api/v1/orders/{order_id}",
         response_model=CustomerOrderView,
@@ -227,6 +242,17 @@ def create_app(token_registry: TokenRegistry | None = None, order_source: OrderS
                             needs_human_review=turn.reply.needs_human_review,
                             citations=[CitationView.model_validate(citation) for citation in turn.reply.citations])
 
+    @app.get("/api/v1/cases", response_model=CaseListView, tags=["Cases"],
+             summary="List the caller's cases, newest first",
+             responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}, 503: {"model": ErrorResponse}})
+    def list_cases(
+        principal: Annotated[Principal, Depends(require_customer)],
+        request: Request,
+        limit: Annotated[int, Query(ge=1, le=50)] = 20,
+    ) -> CaseListView:
+        cases = request.app.state.case_store.earlier_cases(principal.subject_id, EPOCH, limit)
+        return CaseListView(cases=cases)
+
     @app.get(
         "/api/v1/cases/{case_id}",
         response_model=CaseView,
@@ -277,8 +303,11 @@ def create_app(token_registry: TokenRegistry | None = None, order_source: OrderS
             case, summary = support_desk.read_case(request.app.state.case_store, case_id)
         except support_desk.CaseNotFound:
             raise HTTPException(404, "Case not found") from None
+        # The agent works the case, so they see its order; the order endpoints stay customer-only.
+        order = request.app.state.order_source.get(case.order_id) if case.order_id else None
         return SupportCaseView.model_validate({**vars(case), "waiting_since": case.waiting_since,
-                                               "summary": summary.text if summary else None})
+                                               "summary": summary.text if summary else None,
+                                               "order": CustomerOrderView.model_validate(order) if order else None})
 
     def _run(action, request: Request, response: Response, *args):
         try:

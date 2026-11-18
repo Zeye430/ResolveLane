@@ -27,6 +27,7 @@ import logging
 import os
 import re
 import shutil
+import sys
 import threading
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -87,6 +88,17 @@ class MCPServerConfig(BaseModel):
         if len({tool.name for tool in self.tools}) != len(self.tools):
             raise ValueError("Each tool may be listed once per server")
         return self
+
+
+# A stdio server written in Python as part of this application names its interpreter with this
+# placeholder, so it runs with ResolveLane's packages whichever environment PATH points to.
+THIS_PYTHON = "{python}"
+
+
+def _command(command: str) -> str:
+    if command == THIS_PYTHON:
+        return sys.executable
+    return shutil.which(command) or command
 
 
 class MCPConfig(BaseModel):
@@ -229,8 +241,7 @@ class MCPHub:
             # Only the variables a server is configured to receive: the application's keys stay here.
             env = {name: os.environ[name] for name in ("PATH", "HOME", "SYSTEMROOT", *config.env_vars)
                    if name in os.environ}
-            return StdioServerParameters(command=shutil.which(config.command) or config.command,
-                                         args=list(config.args), env=env)
+            return StdioServerParameters(command=_command(config.command), args=list(config.args), env=env)
 
         @contextlib.asynccontextmanager
         async def http_transport():

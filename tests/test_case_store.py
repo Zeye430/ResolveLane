@@ -86,7 +86,7 @@ def test_failed_commit_stores_neither_the_case_nor_the_receipt():
 def test_reopening_does_not_migrate_again(tmp_path):
     path = str(tmp_path / "cases.sqlite3")
     CaseStore(path).close()
-    assert CaseStore(path).schema_version == len(MIGRATIONS) == 5
+    assert CaseStore(path).schema_version == len(MIGRATIONS) == 6
 
 
 def test_database_from_a_newer_version_is_refused(tmp_path):

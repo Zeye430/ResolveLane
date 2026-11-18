@@ -38,6 +38,32 @@ class MessageRole(str, Enum):
 
 
 @dataclass(frozen=True)
+class ToolCall:
+    name: str
+    ok: bool
+    latency_ms: float
+    error: str = ""
+
+
+@dataclass(frozen=True)
+class ReplyTrace:
+    """How an assistant reply came about, kept with the message for support agents and engineers.
+
+    Internal: customers never see it. It records what happened, not the prompt or model output.
+    """
+    written_by: str                 # "agent" (the language model's reply was sent) or "rules"
+    fallback: str                   # why the agent's reply was not sent; "none" when it was or was not tried
+    recognition: str                # the tier that recognized the issues, e.g. "llm" or "keywords"
+    issues: tuple[Issue, ...]       # the issues recognized in the customer's message
+    seconds: float                  # recognizing the message and writing the reply
+    model: str | None = None        # the language model asked to write the reply, if any
+    rounds: int = 0                 # model calls for the reply
+    tools: tuple[ToolCall, ...] = ()
+    skills: tuple[str, ...] = ()    # name@version of each handling guide given to the agent
+    repeat: bool = False            # nearly the same as the assistant's previous reply
+
+
+@dataclass(frozen=True)
 class CaseMessage:
     role: MessageRole
     text: str
@@ -46,6 +72,8 @@ class CaseMessage:
     citations: tuple[Citation, ...] = ()
     # For support agent messages: who wrote it. Internal; customers see only the role.
     author_id: str | None = None
+    # For assistant replies: how the reply came about. Internal.
+    trace: ReplyTrace | None = None
 
 
 @dataclass(frozen=True)

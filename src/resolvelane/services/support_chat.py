@@ -27,6 +27,7 @@ import difflib
 import hashlib
 import json
 import logging
+import time
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime
@@ -35,7 +36,7 @@ from resolvelane import metrics
 from resolvelane.assistant import AssistantReply, respond
 from resolvelane.case_store import CaseStore, Receipt
 from resolvelane.domain.case import (Case, CaseMessage, CaseStatus, CaseSummary, EarlierCase, Issue, MessageRole,
-                                     ordered_issues)
+                                     ReplyTrace, ToolCall, ordered_issues)
 from resolvelane.domain.delivery import Order
 from resolvelane.domain.knowledge import Citation
 from resolvelane.domain.refund import RefundStatus
@@ -247,10 +248,23 @@ def _repeats(case: Case, reply: str) -> bool:
     return previous is not None and difflib.SequenceMatcher(None, previous, reply).ratio() >= REPEAT_SIMILARITY
 
 
-def _record(cases: CaseStore, case: Case, message: str, reply: AssistantReply) -> None:
+def _record(cases: CaseStore, case: Case, message: str, reply: AssistantReply, trace: ReplyTrace) -> None:
     now = cases.clock()
     case.messages.append(CaseMessage(MessageRole.CUSTOMER, message, now))
-    case.messages.append(CaseMessage(MessageRole.ASSISTANT, reply.reply, now, reply.citations))
+    case.messages.append(CaseMessage(MessageRole.ASSISTANT, reply.reply, now, reply.citations, trace=trace))
+
+
+def _trace(recognition: Recognition, draft: AgentDraft | None, fallback: str, agent: ReplyAgent | None,
+           seconds: float, repeat: bool) -> ReplyTrace:
+    llm = getattr(agent, "llm", None)
+    return ReplyTrace(
+        written_by="agent" if draft else "rules", fallback=fallback, recognition=recognition.source,
+        issues=tuple(recognition.issues), seconds=round(seconds, 2),
+        model=getattr(llm, "model", None) if fallback != "none" or draft else None,
+        rounds=draft.rounds if draft else 0,
+        tools=tuple(ToolCall(trace.name, trace.ok, round(trace.latency_ms, 1), trace.error)
+                    for trace in draft.tool_traces) if draft else (),
+        skills=tuple(draft.skills) if draft else (), repeat=repeat)
 
 
 def _commit(cases: CaseStore, case: Case, reply: AssistantReply, customer_id: str, key: str | None,
@@ -281,10 +295,12 @@ def handle_message(cases: CaseStore, orders: OrderSource, recognizer: IssueRecog
         earlier = earlier_cases(cases, customer_id, case_id, cases.clock())
 
     # Phase 2: slow work without the lock, so other customers' messages are not blocked.
+    started = time.perf_counter()
     recognition = recognizer.recognize(message, history)
     plan = _plan(orders, customer_id, state, recognition, order_id)
     draft, fallback = _draft(reply_agent, cases, plan, customer_id, message, history, summary, earlier, refunds,
                              state, cases.clock())
+    seconds = time.perf_counter() - started
     metrics.RECOGNITIONS.labels(recognition.source).inc()
 
     # Phase 3: re-check and apply.
@@ -315,7 +331,7 @@ def handle_message(cases: CaseStore, orders: OrderSource, recognizer: IssueRecog
                         plan.lookup.access.value, customer_id, plan.looked_up_order_id)
         if plan.redirect:
             metrics.REPLIES.labels("rules", "none").inc()
-            _record(cases, case, message, plan.reply)
+            _record(cases, case, message, plan.reply, _trace(recognition, None, "none", None, seconds, False))
             return _commit(cases, case, plan.reply, customer_id, idempotency_key, fingerprint)
 
         review_request = draft.review_request if draft else None
@@ -333,11 +349,12 @@ def handle_message(cases: CaseStore, orders: OrderSource, recognizer: IssueRecog
             logger.info("reply case=%s source=rules fallback=%s", case.case_id, fallback)
         source = "agent" if draft else "rules"
         metrics.REPLIES.labels(source, fallback).inc()
-        if _repeats(case, reply.reply):
+        repeat = _repeats(case, reply.reply)
+        if repeat:
             metrics.REPLY_REPEATS.labels(source).inc()
             logger.info("reply_repeat case=%s source=%s", case.case_id, source)
 
-        _record(cases, case, message, reply)
+        _record(cases, case, message, reply, _trace(recognition, draft, fallback, reply_agent, seconds, repeat))
         case.issues = ordered_issues(case.issues + plan.new_issues)
         if plan.order is not None:
             # Bind only an order the customer may access, never one that failed the lookup.

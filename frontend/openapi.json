@@ -1,0 +1,2970 @@
+{
+ "components": {
+  "schemas": {
+   "CaseListEntryView": {
+    "properties": {
+     "case_id": {
+      "title": "Case Id",
+      "type": "string"
+     },
+     "issues": {
+      "items": {
+       "$ref": "#/components/schemas/Issue"
+      },
+      "title": "Issues",
+      "type": "array"
+     },
+     "opened_at": {
+      "format": "date-time",
+      "title": "Opened At",
+      "type": "string"
+     },
+     "order_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Order Id"
+     },
+     "status": {
+      "$ref": "#/components/schemas/CaseStatus"
+     }
+    },
+    "required": [
+     "case_id",
+     "order_id",
+     "status",
+     "issues",
+     "opened_at"
+    ],
+    "title": "CaseListEntryView",
+    "type": "object"
+   },
+   "CaseListView": {
+    "properties": {
+     "cases": {
+      "description": "The caller's cases, newest first",
+      "items": {
+       "$ref": "#/components/schemas/CaseListEntryView"
+      },
+      "title": "Cases",
+      "type": "array"
+     }
+    },
+    "required": [
+     "cases"
+    ],
+    "title": "CaseListView",
+    "type": "object"
+   },
+   "CaseMessageView": {
+    "properties": {
+     "citations": {
+      "items": {
+       "$ref": "#/components/schemas/CitationView"
+      },
+      "title": "Citations",
+      "type": "array"
+     },
+     "role": {
+      "$ref": "#/components/schemas/MessageRole"
+     },
+     "sent_at": {
+      "format": "date-time",
+      "title": "Sent At",
+      "type": "string"
+     },
+     "text": {
+      "title": "Text",
+      "type": "string"
+     }
+    },
+    "required": [
+     "role",
+     "text",
+     "sent_at",
+     "citations"
+    ],
+    "title": "CaseMessageView",
+    "type": "object"
+   },
+   "CaseStatus": {
+    "enum": [
+     "open",
+     "needs_review",
+     "resolved"
+    ],
+    "title": "CaseStatus",
+    "type": "string"
+   },
+   "CaseView": {
+    "description": "A case as its customer may see it; pending issues are internal bookkeeping.",
+    "properties": {
+     "case_id": {
+      "title": "Case Id",
+      "type": "string"
+     },
+     "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+     },
+     "issues": {
+      "items": {
+       "$ref": "#/components/schemas/Issue"
+      },
+      "title": "Issues",
+      "type": "array"
+     },
+     "messages": {
+      "items": {
+       "$ref": "#/components/schemas/CaseMessageView"
+      },
+      "title": "Messages",
+      "type": "array"
+     },
+     "order_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Order Id"
+     },
+     "refunds": {
+      "items": {
+       "$ref": "#/components/schemas/CustomerRefundView"
+      },
+      "title": "Refunds",
+      "type": "array"
+     },
+     "status": {
+      "$ref": "#/components/schemas/CaseStatus"
+     }
+    },
+    "required": [
+     "case_id",
+     "order_id",
+     "status",
+     "issues",
+     "created_at",
+     "messages"
+    ],
+    "title": "CaseView",
+    "type": "object"
+   },
+   "ChatRequest": {
+    "properties": {
+     "case_id": {
+      "anyOf": [
+       {
+        "maxLength": 64,
+        "minLength": 1,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "Continue an existing case; omit to start a new one",
+      "title": "Case Id"
+     },
+     "message": {
+      "maxLength": 2000,
+      "minLength": 1,
+      "title": "Message",
+      "type": "string"
+     },
+     "order_id": {
+      "anyOf": [
+       {
+        "maxLength": 64,
+        "minLength": 1,
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Order Id"
+     }
+    },
+    "required": [
+     "message"
+    ],
+    "title": "ChatRequest",
+    "type": "object"
+   },
+   "ChatResponse": {
+    "properties": {
+     "case_id": {
+      "title": "Case Id",
+      "type": "string"
+     },
+     "case_status": {
+      "$ref": "#/components/schemas/CaseStatus"
+     },
+     "citations": {
+      "description": "Help center sections the reply relies on",
+      "items": {
+       "$ref": "#/components/schemas/CitationView"
+      },
+      "title": "Citations",
+      "type": "array"
+     },
+     "issues": {
+      "description": "Issues answered by this reply",
+      "items": {
+       "$ref": "#/components/schemas/Issue"
+      },
+      "title": "Issues",
+      "type": "array"
+     },
+     "needs_human_review": {
+      "title": "Needs Human Review",
+      "type": "boolean"
+     },
+     "order_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "The order this case is about, once it has been found",
+      "title": "Order Id"
+     },
+     "reply": {
+      "title": "Reply",
+      "type": "string"
+     }
+    },
+    "required": [
+     "case_id",
+     "case_status",
+     "reply",
+     "issues",
+     "order_id",
+     "needs_human_review"
+    ],
+    "title": "ChatResponse",
+    "type": "object"
+   },
+   "CitationView": {
+    "description": "The help center article version and section a reply relied on.",
+    "properties": {
+     "article_id": {
+      "title": "Article Id",
+      "type": "string"
+     },
+     "section": {
+      "title": "Section",
+      "type": "string"
+     },
+     "title": {
+      "title": "Title",
+      "type": "string"
+     },
+     "version": {
+      "title": "Version",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "article_id",
+     "version",
+     "title",
+     "section"
+    ],
+    "title": "CitationView",
+    "type": "object"
+   },
+   "CustomerOrderView": {
+    "description": "An order as its owner may see it; internal customer and merchant IDs are omitted.",
+    "properties": {
+     "currency": {
+      "title": "Currency",
+      "type": "string"
+     },
+     "delivery_events": {
+      "items": {
+       "$ref": "#/components/schemas/DeliveryEventView"
+      },
+      "title": "Delivery Events",
+      "type": "array"
+     },
+     "delivery_fee_minor": {
+      "title": "Delivery Fee Minor",
+      "type": "integer"
+     },
+     "estimated_delivery_at": {
+      "format": "date-time",
+      "title": "Estimated Delivery At",
+      "type": "string"
+     },
+     "items": {
+      "items": {
+       "$ref": "#/components/schemas/OrderItemView"
+      },
+      "title": "Items",
+      "type": "array"
+     },
+     "order_id": {
+      "title": "Order Id",
+      "type": "string"
+     },
+     "status": {
+      "$ref": "#/components/schemas/OrderStatus"
+     },
+     "tax_minor": {
+      "title": "Tax Minor",
+      "type": "integer"
+     },
+     "total_minor": {
+      "title": "Total Minor",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "order_id",
+     "status",
+     "currency",
+     "items",
+     "delivery_fee_minor",
+     "tax_minor",
+     "total_minor",
+     "estimated_delivery_at",
+     "delivery_events"
+    ],
+    "title": "CustomerOrderView",
+    "type": "object"
+   },
+   "CustomerRefundView": {
+    "description": "An approved refund. Proposals and rejections are internal: the support agent tells the customer.",
+    "properties": {
+     "amount_minor": {
+      "title": "Amount Minor",
+      "type": "integer"
+     },
+     "approved_at": {
+      "format": "date-time",
+      "title": "Approved At",
+      "type": "string"
+     },
+     "currency": {
+      "title": "Currency",
+      "type": "string"
+     },
+     "delivery_fee_minor": {
+      "title": "Delivery Fee Minor",
+      "type": "integer"
+     },
+     "lines": {
+      "items": {
+       "$ref": "#/components/schemas/RefundLineView"
+      },
+      "title": "Lines",
+      "type": "array"
+     },
+     "payment_status": {
+      "description": "sent once the payment provider has made the refund; delayed when it could not be sent and a support agent is looking into it",
+      "enum": [
+       "processing",
+       "sent",
+       "delayed"
+      ],
+      "title": "Payment Status",
+      "type": "string"
+     },
+     "refund_id": {
+      "title": "Refund Id",
+      "type": "string"
+     },
+     "sent_at": {
+      "anyOf": [
+       {
+        "format": "date-time",
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Sent At"
+     },
+     "status": {
+      "$ref": "#/components/schemas/RefundStatus"
+     }
+    },
+    "required": [
+     "refund_id",
+     "status",
+     "currency",
+     "amount_minor",
+     "lines",
+     "delivery_fee_minor",
+     "approved_at",
+     "payment_status",
+     "sent_at"
+    ],
+    "title": "CustomerRefundView",
+    "type": "object"
+   },
+   "DeliveryEventType": {
+    "enum": [
+     "order_placed",
+     "merchant_accepted",
+     "courier_assigned",
+     "picked_up",
+     "delivered",
+     "cancelled"
+    ],
+    "title": "DeliveryEventType",
+    "type": "string"
+   },
+   "DeliveryEventView": {
+    "properties": {
+     "event_type": {
+      "$ref": "#/components/schemas/DeliveryEventType"
+     },
+     "occurred_at": {
+      "format": "date-time",
+      "title": "Occurred At",
+      "type": "string"
+     }
+    },
+    "required": [
+     "event_type",
+     "occurred_at"
+    ],
+    "title": "DeliveryEventView",
+    "type": "object"
+   },
+   "ErrorResponse": {
+    "properties": {
+     "detail": {
+      "title": "Detail",
+      "type": "string"
+     }
+    },
+    "required": [
+     "detail"
+    ],
+    "title": "ErrorResponse",
+    "type": "object"
+   },
+   "HTTPValidationError": {
+    "properties": {
+     "detail": {
+      "items": {
+       "$ref": "#/components/schemas/ValidationError"
+      },
+      "title": "Detail",
+      "type": "array"
+     }
+    },
+    "title": "HTTPValidationError",
+    "type": "object"
+   },
+   "HealthResponse": {
+    "properties": {
+     "status": {
+      "title": "Status",
+      "type": "string"
+     }
+    },
+    "required": [
+     "status"
+    ],
+    "title": "HealthResponse",
+    "type": "object"
+   },
+   "Issue": {
+    "enum": [
+     "late_delivery",
+     "missing_item",
+     "wrong_item",
+     "damaged_item",
+     "cancellation",
+     "delivery_status",
+     "unknown"
+    ],
+    "title": "Issue",
+    "type": "string"
+   },
+   "MessageRole": {
+    "enum": [
+     "customer",
+     "assistant",
+     "support_agent",
+     "system"
+    ],
+    "title": "MessageRole",
+    "type": "string"
+   },
+   "OrderItemView": {
+    "properties": {
+     "item_id": {
+      "title": "Item Id",
+      "type": "string"
+     },
+     "name": {
+      "title": "Name",
+      "type": "string"
+     },
+     "quantity": {
+      "title": "Quantity",
+      "type": "integer"
+     },
+     "unit_price_minor": {
+      "title": "Unit Price Minor",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "item_id",
+     "name",
+     "quantity",
+     "unit_price_minor"
+    ],
+    "title": "OrderItemView",
+    "type": "object"
+   },
+   "OrderListView": {
+    "properties": {
+     "orders": {
+      "items": {
+       "$ref": "#/components/schemas/CustomerOrderView"
+      },
+      "title": "Orders",
+      "type": "array"
+     }
+    },
+    "required": [
+     "orders"
+    ],
+    "title": "OrderListView",
+    "type": "object"
+   },
+   "OrderStatus": {
+    "enum": [
+     "in_progress",
+     "delivered",
+     "cancelled"
+    ],
+    "title": "OrderStatus",
+    "type": "string"
+   },
+   "PaymentStatus": {
+    "enum": [
+     "pending",
+     "succeeded",
+     "failed",
+     "unconfirmed"
+    ],
+    "title": "PaymentStatus",
+    "type": "string"
+   },
+   "PaymentView": {
+    "properties": {
+     "amount_minor": {
+      "title": "Amount Minor",
+      "type": "integer"
+     },
+     "attempts": {
+      "title": "Attempts",
+      "type": "integer"
+     },
+     "completed_at": {
+      "anyOf": [
+       {
+        "format": "date-time",
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Completed At"
+     },
+     "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+     },
+     "currency": {
+      "title": "Currency",
+      "type": "string"
+     },
+     "last_error": {
+      "title": "Last Error",
+      "type": "string"
+     },
+     "next_attempt_at": {
+      "format": "date-time",
+      "title": "Next Attempt At",
+      "type": "string"
+     },
+     "payment_id": {
+      "description": "Also the idempotency key sent to the payment provider",
+      "title": "Payment Id",
+      "type": "string"
+     },
+     "provider_refund_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Provider Refund Id"
+     },
+     "status": {
+      "$ref": "#/components/schemas/PaymentStatus"
+     }
+    },
+    "required": [
+     "payment_id",
+     "amount_minor",
+     "currency",
+     "status",
+     "attempts",
+     "next_attempt_at",
+     "provider_refund_id",
+     "last_error",
+     "created_at",
+     "completed_at"
+    ],
+    "title": "PaymentView",
+    "type": "object"
+   },
+   "PrincipalView": {
+    "description": "Who the bearer token belongs to, so a client can show the right screens.",
+    "properties": {
+     "role": {
+      "enum": [
+       "customer",
+       "support_agent",
+       "operator"
+      ],
+      "title": "Role",
+      "type": "string"
+     },
+     "subject_id": {
+      "title": "Subject Id",
+      "type": "string"
+     }
+    },
+    "required": [
+     "subject_id",
+     "role"
+    ],
+    "title": "PrincipalView",
+    "type": "object"
+   },
+   "QueueEntryView": {
+    "properties": {
+     "case_id": {
+      "title": "Case Id",
+      "type": "string"
+     },
+     "customer_id": {
+      "title": "Customer Id",
+      "type": "string"
+     },
+     "issues": {
+      "items": {
+       "$ref": "#/components/schemas/Issue"
+      },
+      "title": "Issues",
+      "type": "array"
+     },
+     "message_count": {
+      "title": "Message Count",
+      "type": "integer"
+     },
+     "order_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Order Id"
+     },
+     "review_notes": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Review Notes",
+      "type": "array"
+     },
+     "status": {
+      "$ref": "#/components/schemas/CaseStatus"
+     },
+     "waiting_since": {
+      "format": "date-time",
+      "title": "Waiting Since",
+      "type": "string"
+     }
+    },
+    "required": [
+     "case_id",
+     "customer_id",
+     "order_id",
+     "status",
+     "issues",
+     "review_notes",
+     "waiting_since",
+     "message_count"
+    ],
+    "title": "QueueEntryView",
+    "type": "object"
+   },
+   "QueuePageView": {
+    "properties": {
+     "cases": {
+      "items": {
+       "$ref": "#/components/schemas/QueueEntryView"
+      },
+      "title": "Cases",
+      "type": "array"
+     },
+     "next_cursor": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "Pass as cursor to read the next page; null on the last page",
+      "title": "Next Cursor"
+     }
+    },
+    "required": [
+     "cases",
+     "next_cursor"
+    ],
+    "title": "QueuePageView",
+    "type": "object"
+   },
+   "RefundActionResponse": {
+    "properties": {
+     "amount_minor": {
+      "title": "Amount Minor",
+      "type": "integer"
+     },
+     "case_id": {
+      "title": "Case Id",
+      "type": "string"
+     },
+     "currency": {
+      "title": "Currency",
+      "type": "string"
+     },
+     "refund_id": {
+      "title": "Refund Id",
+      "type": "string"
+     },
+     "status": {
+      "$ref": "#/components/schemas/RefundStatus"
+     },
+     "version": {
+      "title": "Version",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "refund_id",
+     "case_id",
+     "status",
+     "version",
+     "amount_minor",
+     "currency"
+    ],
+    "title": "RefundActionResponse",
+    "type": "object"
+   },
+   "RefundDecisionRequest": {
+    "properties": {
+     "note": {
+      "default": "",
+      "description": "Internal note on the decision",
+      "maxLength": 500,
+      "title": "Note",
+      "type": "string"
+     },
+     "version": {
+      "description": "The version reviewed; it must be the current one",
+      "minimum": 1.0,
+      "title": "Version",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "version"
+    ],
+    "title": "RefundDecisionRequest",
+    "type": "object"
+   },
+   "RefundItemRequest": {
+    "properties": {
+     "item_id": {
+      "maxLength": 64,
+      "minLength": 1,
+      "title": "Item Id",
+      "type": "string"
+     },
+     "quantity": {
+      "maximum": 99.0,
+      "minimum": 1.0,
+      "title": "Quantity",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "item_id",
+     "quantity"
+    ],
+    "title": "RefundItemRequest",
+    "type": "object"
+   },
+   "RefundLineView": {
+    "properties": {
+     "amount_minor": {
+      "title": "Amount Minor",
+      "type": "integer"
+     },
+     "item_id": {
+      "title": "Item Id",
+      "type": "string"
+     },
+     "name": {
+      "title": "Name",
+      "type": "string"
+     },
+     "quantity": {
+      "title": "Quantity",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "item_id",
+     "name",
+     "quantity",
+     "amount_minor"
+    ],
+    "title": "RefundLineView",
+    "type": "object"
+   },
+   "RefundProposalRequest": {
+    "properties": {
+     "include_delivery_fee": {
+      "default": false,
+      "title": "Include Delivery Fee",
+      "type": "boolean"
+     },
+     "items": {
+      "description": "Order items to refund, each once",
+      "items": {
+       "$ref": "#/components/schemas/RefundItemRequest"
+      },
+      "maxItems": 50,
+      "title": "Items",
+      "type": "array"
+     },
+     "reason": {
+      "description": "Internal: why this refund",
+      "maxLength": 500,
+      "minLength": 1,
+      "title": "Reason",
+      "type": "string"
+     }
+    },
+    "required": [
+     "items",
+     "reason"
+    ],
+    "title": "RefundProposalRequest",
+    "type": "object"
+   },
+   "RefundRejectionRequest": {
+    "properties": {
+     "note": {
+      "description": "Internal note on why the refund was rejected",
+      "maxLength": 500,
+      "minLength": 1,
+      "title": "Note",
+      "type": "string"
+     },
+     "version": {
+      "description": "The version reviewed; it must be the current one",
+      "minimum": 1.0,
+      "title": "Version",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "version",
+     "note"
+    ],
+    "title": "RefundRejectionRequest",
+    "type": "object"
+   },
+   "RefundRevisionRequest": {
+    "properties": {
+     "include_delivery_fee": {
+      "default": false,
+      "title": "Include Delivery Fee",
+      "type": "boolean"
+     },
+     "items": {
+      "description": "Order items to refund, each once",
+      "items": {
+       "$ref": "#/components/schemas/RefundItemRequest"
+      },
+      "maxItems": 50,
+      "title": "Items",
+      "type": "array"
+     },
+     "reason": {
+      "description": "Internal: why this refund",
+      "maxLength": 500,
+      "minLength": 1,
+      "title": "Reason",
+      "type": "string"
+     },
+     "revises": {
+      "description": "The version this revision replaces; it must be the current one",
+      "minimum": 1.0,
+      "title": "Revises",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "items",
+     "reason",
+     "revises"
+    ],
+    "title": "RefundRevisionRequest",
+    "type": "object"
+   },
+   "RefundStatus": {
+    "enum": [
+     "proposed",
+     "approved",
+     "rejected"
+    ],
+    "title": "RefundStatus",
+    "type": "string"
+   },
+   "RefundVersionView": {
+    "properties": {
+     "amount_minor": {
+      "title": "Amount Minor",
+      "type": "integer"
+     },
+     "author_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Author Id"
+     },
+     "author_role": {
+      "title": "Author Role",
+      "type": "string"
+     },
+     "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+     },
+     "delivery_fee_minor": {
+      "title": "Delivery Fee Minor",
+      "type": "integer"
+     },
+     "lines": {
+      "items": {
+       "$ref": "#/components/schemas/RefundLineView"
+      },
+      "title": "Lines",
+      "type": "array"
+     },
+     "reason": {
+      "title": "Reason",
+      "type": "string"
+     },
+     "version": {
+      "title": "Version",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "version",
+     "lines",
+     "delivery_fee_minor",
+     "amount_minor",
+     "reason",
+     "author_role",
+     "author_id",
+     "created_at"
+    ],
+    "title": "RefundVersionView",
+    "type": "object"
+   },
+   "RefundView": {
+    "properties": {
+     "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+     },
+     "currency": {
+      "title": "Currency",
+      "type": "string"
+     },
+     "decided_at": {
+      "anyOf": [
+       {
+        "format": "date-time",
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Decided At"
+     },
+     "decided_by": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Decided By"
+     },
+     "decided_version": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Decided Version"
+     },
+     "decision_note": {
+      "title": "Decision Note",
+      "type": "string"
+     },
+     "order_id": {
+      "title": "Order Id",
+      "type": "string"
+     },
+     "payment": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/PaymentView"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "refund_id": {
+      "title": "Refund Id",
+      "type": "string"
+     },
+     "status": {
+      "$ref": "#/components/schemas/RefundStatus"
+     },
+     "versions": {
+      "description": "Every version proposed; the last one is current",
+      "items": {
+       "$ref": "#/components/schemas/RefundVersionView"
+      },
+      "title": "Versions",
+      "type": "array"
+     }
+    },
+    "required": [
+     "refund_id",
+     "order_id",
+     "currency",
+     "status",
+     "created_at",
+     "versions",
+     "decided_version",
+     "decided_at",
+     "decided_by",
+     "decision_note",
+     "payment"
+    ],
+    "title": "RefundView",
+    "type": "object"
+   },
+   "ReplyTraceView": {
+    "description": "How an assistant reply came about. Internal: never part of a customer view.",
+    "properties": {
+     "fallback": {
+      "description": "Why the agent's reply was not sent, e.g. ungrounded_number, circuit_open or case_changed; none when it was sent or no agent was asked",
+      "title": "Fallback",
+      "type": "string"
+     },
+     "issues": {
+      "description": "Issues recognized in the customer's message",
+      "items": {
+       "$ref": "#/components/schemas/Issue"
+      },
+      "title": "Issues",
+      "type": "array"
+     },
+     "model": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Model"
+     },
+     "recognition": {
+      "description": "The recognition tier that decided the issues: llm, remote_embedding, local_embedding, keywords or none",
+      "title": "Recognition",
+      "type": "string"
+     },
+     "repeat": {
+      "description": "Nearly the same as the assistant's previous reply",
+      "title": "Repeat",
+      "type": "boolean"
+     },
+     "rounds": {
+      "description": "Language model calls for the reply",
+      "title": "Rounds",
+      "type": "integer"
+     },
+     "seconds": {
+      "description": "Time to recognize the message and write the reply",
+      "title": "Seconds",
+      "type": "number"
+     },
+     "skills": {
+      "description": "Handling guides given to the agent, as name@version",
+      "items": {
+       "type": "string"
+      },
+      "title": "Skills",
+      "type": "array"
+     },
+     "tools": {
+      "items": {
+       "$ref": "#/components/schemas/ToolCallView"
+      },
+      "title": "Tools",
+      "type": "array"
+     },
+     "written_by": {
+      "description": "agent when the language model's reply was sent; rules when the rule-based reply was",
+      "enum": [
+       "agent",
+       "rules"
+      ],
+      "title": "Written By",
+      "type": "string"
+     }
+    },
+    "required": [
+     "written_by",
+     "fallback",
+     "recognition",
+     "issues",
+     "seconds",
+     "model",
+     "rounds",
+     "tools",
+     "skills",
+     "repeat"
+    ],
+    "title": "ReplyTraceView",
+    "type": "object"
+   },
+   "ResolveRequest": {
+    "properties": {
+     "note": {
+      "description": "Internal note on how the case was resolved",
+      "maxLength": 500,
+      "minLength": 1,
+      "title": "Note",
+      "type": "string"
+     }
+    },
+    "required": [
+     "note"
+    ],
+    "title": "ResolveRequest",
+    "type": "object"
+   },
+   "SupportActionResponse": {
+    "properties": {
+     "case_id": {
+      "title": "Case Id",
+      "type": "string"
+     },
+     "message_count": {
+      "title": "Message Count",
+      "type": "integer"
+     },
+     "status": {
+      "$ref": "#/components/schemas/CaseStatus"
+     }
+    },
+    "required": [
+     "case_id",
+     "status",
+     "message_count"
+    ],
+    "title": "SupportActionResponse",
+    "type": "object"
+   },
+   "SupportCaseView": {
+    "description": "Everything support agents need to handle a case, including internal notes.",
+    "properties": {
+     "case_id": {
+      "title": "Case Id",
+      "type": "string"
+     },
+     "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+     },
+     "customer_id": {
+      "title": "Customer Id",
+      "type": "string"
+     },
+     "issues": {
+      "items": {
+       "$ref": "#/components/schemas/Issue"
+      },
+      "title": "Issues",
+      "type": "array"
+     },
+     "messages": {
+      "items": {
+       "$ref": "#/components/schemas/SupportMessageView"
+      },
+      "title": "Messages",
+      "type": "array"
+     },
+     "order": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/CustomerOrderView"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "The order record the case is about, once it is known"
+     },
+     "order_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Order Id"
+     },
+     "pending_issues": {
+      "items": {
+       "$ref": "#/components/schemas/Issue"
+      },
+      "title": "Pending Issues",
+      "type": "array"
+     },
+     "refunds": {
+      "items": {
+       "$ref": "#/components/schemas/RefundView"
+      },
+      "title": "Refunds",
+      "type": "array"
+     },
+     "review_notes": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Review Notes",
+      "type": "array"
+     },
+     "status": {
+      "$ref": "#/components/schemas/CaseStatus"
+     },
+     "summary": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "Model-written summary of older messages; derived, not a record",
+      "title": "Summary"
+     },
+     "transitions": {
+      "items": {
+       "$ref": "#/components/schemas/TransitionView"
+      },
+      "title": "Transitions",
+      "type": "array"
+     },
+     "waiting_since": {
+      "format": "date-time",
+      "title": "Waiting Since",
+      "type": "string"
+     }
+    },
+    "required": [
+     "case_id",
+     "customer_id",
+     "order_id",
+     "status",
+     "issues",
+     "pending_issues",
+     "review_notes",
+     "created_at",
+     "waiting_since",
+     "summary",
+     "order",
+     "messages",
+     "transitions",
+     "refunds"
+    ],
+    "title": "SupportCaseView",
+    "type": "object"
+   },
+   "SupportMessageView": {
+    "properties": {
+     "author_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Author Id"
+     },
+     "citations": {
+      "items": {
+       "$ref": "#/components/schemas/CitationView"
+      },
+      "title": "Citations",
+      "type": "array"
+     },
+     "role": {
+      "$ref": "#/components/schemas/MessageRole"
+     },
+     "sent_at": {
+      "format": "date-time",
+      "title": "Sent At",
+      "type": "string"
+     },
+     "text": {
+      "title": "Text",
+      "type": "string"
+     },
+     "trace": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/ReplyTraceView"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "For assistant replies recorded with one"
+     }
+    },
+    "required": [
+     "role",
+     "text",
+     "sent_at",
+     "citations",
+     "author_id",
+     "trace"
+    ],
+    "title": "SupportMessageView",
+    "type": "object"
+   },
+   "SupportReplyRequest": {
+    "properties": {
+     "text": {
+      "maxLength": 2000,
+      "minLength": 1,
+      "title": "Text",
+      "type": "string"
+     }
+    },
+    "required": [
+     "text"
+    ],
+    "title": "SupportReplyRequest",
+    "type": "object"
+   },
+   "ToolCallView": {
+    "properties": {
+     "error": {
+      "title": "Error",
+      "type": "string"
+     },
+     "latency_ms": {
+      "title": "Latency Ms",
+      "type": "number"
+     },
+     "name": {
+      "title": "Name",
+      "type": "string"
+     },
+     "ok": {
+      "title": "Ok",
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "name",
+     "ok",
+     "latency_ms",
+     "error"
+    ],
+    "title": "ToolCallView",
+    "type": "object"
+   },
+   "TransitionView": {
+    "properties": {
+     "actor_id": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Actor Id"
+     },
+     "actor_role": {
+      "title": "Actor Role",
+      "type": "string"
+     },
+     "at": {
+      "format": "date-time",
+      "title": "At",
+      "type": "string"
+     },
+     "from_status": {
+      "$ref": "#/components/schemas/CaseStatus"
+     },
+     "note": {
+      "title": "Note",
+      "type": "string"
+     },
+     "to_status": {
+      "$ref": "#/components/schemas/CaseStatus"
+     }
+    },
+    "required": [
+     "at",
+     "from_status",
+     "to_status",
+     "actor_role",
+     "actor_id",
+     "note"
+    ],
+    "title": "TransitionView",
+    "type": "object"
+   },
+   "ValidationError": {
+    "properties": {
+     "ctx": {
+      "title": "Context",
+      "type": "object"
+     },
+     "input": {
+      "title": "Input"
+     },
+     "loc": {
+      "items": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "integer"
+        }
+       ]
+      },
+      "title": "Location",
+      "type": "array"
+     },
+     "msg": {
+      "title": "Message",
+      "type": "string"
+     },
+     "type": {
+      "title": "Error Type",
+      "type": "string"
+     }
+    },
+    "required": [
+     "loc",
+     "msg",
+     "type"
+    ],
+    "title": "ValidationError",
+    "type": "object"
+   }
+  }
+ },
+ "info": {
+  "title": "ResolveLane API",
+  "version": "0.1.0"
+ },
+ "openapi": "3.1.0",
+ "paths": {
+  "/api/v1/cases": {
+   "get": {
+    "operationId": "list_cases_api_v1_cases_get",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+       "default": 20,
+       "maximum": 50,
+       "minimum": 1,
+       "title": "Limit",
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/CaseListView"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "401": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      },
+      "description": "Unauthorized"
+     },
+     "403": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      },
+      "description": "Forbidden"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     },
+     "503": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      },
+      "description": "Service Unavailable"
+     }
+    },
+    "summary": "List the caller's cases, newest first",
+    "tags": [
+     "Cases"
+    ]
+   }
+  },
+  "/api/v1/cases/{case_id}": {
+   "get": {
+    "operationId": "read_case_api_v1_cases__case_id__get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "case_id",
+      "required": true,
+      "schema": {
+       "maxLength": 64,
+       "minLength": 1,
+       "title": "Case Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/CaseView"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "401": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      },
+      "description": "Unauthorized"
+     },
+     "403": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      },
+      "description": "Forbidden"
+     },
+     "404": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      },
+      "description": "Not Found"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     },
+     "503": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      },
+      "description": "Service Unavailable"
+     }
+    },
+    "summary": "Read one of the caller's cases with its conversation",
+    "tags": [
+     "Cases"
+    ]
+   }
+  },
+  "/api/v1/chat": {
+   "post": {
+    "operationId": "chat_api_v1_chat_post",
+    "parameters": [
+     {
+      "description": "A unique value per request, such as a UUID. Retrying with the same key and body returns the original response instead of applying the request again.",
+      "in": "header",
+      "name": "Idempotency-Key",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "maxLength": 128,
+         "minLength": 1,
+         "pattern": "^[\\x21-\\x7e]+$",
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "A unique value per request, such as a UUID. Retrying with the same key and body returns the original response instead of applying the request again.",
+       "title": "Idempotency-Key"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/ChatRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ChatResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "401": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      },
+      "description": "Unauthorized"
+     },
+     "403": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      },
+      "description": "Forbidden"
+     },
+     "404": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      },
+      "description": "The case does not exist or belongs to another customer"
+     },
+     "409": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      },
+      "description": "The case is about a different order"
+     },
+     "422": {
+      "description": "Invalid request, or an Idempotency-Key already used for a different request"
+     },
+     "503": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      },
+      "description": "Service Unavailable"
+     }
+    },
+    "summary": "Send a support message, starting a new case or continuing an existing one",
+    "tags": [
+     "Chat"
+    ]
+   }
+  },
+  "/api/v1/me": {
+   "get": {
+    "operationId": "me_api_v1_me_get",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/PrincipalView"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "401": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      },
+      "description": "Unauthorized"
+     },
+     "503": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      },
+      "description": "Service Unavailable"
+     }
+    },
+    "summary": "Who the bearer token belongs to",
+    "tags": [
+     "Access"
+    ]
+   }
+  },
+  "/api/v1/orders": {
+   "get": {
+    "operationId": "list_orders_api_v1_orders_get",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/OrderListView"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "401": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      },
+      "description": "Unauthorized"
+     },
+     "403": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      },
+      "description": "Forbidden"
+     },
+     "503": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      },
+      "description": "Service Unavailable"
+     }
+    },
+    "summary": "List the caller's simulated orders, newest first",
+    "tags": [
+     "Orders"
+    ]
+   }
+  },
+  "/api/v1/orders/{order_id}": {
+   "get": {
+    "operationId": "get_order_api_v1_orders__order_id__get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "order_id",
+      "required": true,
+      "schema": {
+       "maxLength": 64,
+       "minLength": 1,
+       "title": "Order Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/CustomerOrderView"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "401": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      },
+      "description": "Unauthorized"
+     },
+     "403": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      },
+      "description": "Forbidden"
+     },
+     "404": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      },
+      "description": "The order does not exist or belongs to another customer"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     },
+     "503": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      },
+      "description": "Service Unavailable"
+     }
+    },
+    "summary": "Read one of the caller's simulated orders",
+    "tags": [
+     "Orders"
+    ]
+   }
+  },
+  "/api/v1/support/cases": {
+   "get": {
+    "operationId": "support_queue_api_v1_support_cases_get",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "status",
+      "required": false,
+      "schema": {
+       "$ref": "#/components/schemas/CaseStatus",
+       "default": "needs_review"
+      }
+     },
+     {
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+       "default": 20,
+       "maximum": 50,
+       "minimum": 1,
+       "title": "Limit",
+       "type": "integer"
+      }
+     },
+     {
+      "in": "query",
+      "name": "cursor",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "maxLength": 512,
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Cursor"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/QueuePageView"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "401": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      },
+      "description": "Unauthorized"
+     },
+     "403": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      },
+      "description": "Forbidden"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     },
+     "503": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      },
+      "description": "Service Unavailable"
+     }
+    },
+    "summary": "List cases in a status, longest waiting first",
+    "tags": [
+     "Support desk"
+    ]
+   }
+  },
+  "/api/v1/support/cases/{case_id}": {
+   "get": {
+    "operationId": "support_case_api_v1_support_cases__case_id__get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "case_id",
+      "required": true,
+      "schema": {
+       "maxLength": 64,
+       "minLength": 1,
+       "title": "Case Id",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/SupportCaseView"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "401": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      },
+      "description": "Unauthorized"
+     },
+     "403": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      },
+      "description": "Forbidden"
+     },
+     "404": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      },
+      "description": "Not Found"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     },
+     "503": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      },
+      "description": "Service Unavailable"
+     }
+    },
+    "summary": "Read a case with its internal details",
+    "tags": [
+     "Support desk"
+    ]
+   }
+  },
+  "/api/v1/support/cases/{case_id}/messages": {
+   "post": {
+    "operationId": "support_reply_api_v1_support_cases__case_id__messages_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "case_id",
+      "required": true,
+      "schema": {
+       "maxLength": 64,
+       "minLength": 1,
+       "title": "Case Id",
+       "type": "string"
+      }
+     },
+     {
+      "description": "A unique value per request, such as a UUID. Retrying with the same key and body returns the original response instead of applying the request again.",
+      "in": "header",
+      "name": "Idempotency-Key",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "maxLength": 128,
+         "minLength": 1,
+         "pattern": "^[\\x21-\\x7e]+$",
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "A unique value per request, such as a UUID. Retrying with the same key and body returns the original response instead of applying the request again.",
+       "title": "Idempotency-Key"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/SupportReplyRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/SupportActionResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "401": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      },
+      "description": "Unauthorized"
+     },
+     "403": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      },
+      "description": "Forbidden"
+     },
+     "404": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      },
+      "description": "Not Found"
+     },
+     "409": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      },
+      "description": "The case is resolved, or a refund proposal is still undecided"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     },
+     "503": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      },
+      "description": "Service Unavailable"
+     }
+    },
+    "summary": "Reply to the customer as a support agent",
+    "tags": [
+     "Support desk"
+    ]
+   }
+  },
+  "/api/v1/support/cases/{case_id}/refunds": {
+   "post": {
+    "operationId": "support_propose_refund_api_v1_support_cases__case_id__refunds_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "case_id",
+      "required": true,
+      "schema": {
+       "maxLength": 64,
+       "minLength": 1,
+       "title": "Case Id",
+       "type": "string"
+      }
+     },
+     {
+      "description": "A unique value per request, such as a UUID. Retrying with the same key and body returns the original response instead of applying the request again.",
+      "in": "header",
+      "name": "Idempotency-Key",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "maxLength": 128,
+         "minLength": 1,
+         "pattern": "^[\\x21-\\x7e]+$",
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "A unique value per request, such as a UUID. Retrying with the same key and body returns the original response instead of applying the request again.",
+       "title": "Idempotency-Key"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/RefundProposalRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/RefundActionResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "401": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      },
+      "description": "Unauthorized"
+     },
+     "403": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      },
+      "description": "Forbidden"
+     },
+     "404": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      },
+      "description": "Not Found"
+     },
+     "409": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      },
+      "description": "The refund or case no longer allows this action, e.g. the version reviewed is not the current one"
+     },
+     "422": {
+      "description": "Invalid request, a refund the order does not allow, or a reused Idempotency-Key"
+     },
+     "503": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      },
+      "description": "Service Unavailable"
+     }
+    },
+    "summary": "Propose a refund, priced from the order record",
+    "tags": [
+     "Support desk"
+    ]
+   }
+  },
+  "/api/v1/support/cases/{case_id}/resolution": {
+   "post": {
+    "operationId": "support_resolve_api_v1_support_cases__case_id__resolution_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "case_id",
+      "required": true,
+      "schema": {
+       "maxLength": 64,
+       "minLength": 1,
+       "title": "Case Id",
+       "type": "string"
+      }
+     },
+     {
+      "description": "A unique value per request, such as a UUID. Retrying with the same key and body returns the original response instead of applying the request again.",
+      "in": "header",
+      "name": "Idempotency-Key",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "maxLength": 128,
+         "minLength": 1,
+         "pattern": "^[\\x21-\\x7e]+$",
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "A unique value per request, such as a UUID. Retrying with the same key and body returns the original response instead of applying the request again.",
+       "title": "Idempotency-Key"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/ResolveRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/SupportActionResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "401": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      },
+      "description": "Unauthorized"
+     },
+     "403": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      },
+      "description": "Forbidden"
+     },
+     "404": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      },
+      "description": "Not Found"
+     },
+     "409": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      },
+      "description": "The case is resolved, or a refund proposal is still undecided"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     },
+     "503": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      },
+      "description": "Service Unavailable"
+     }
+    },
+    "summary": "Resolve the case",
+    "tags": [
+     "Support desk"
+    ]
+   }
+  },
+  "/api/v1/support/refunds/{refund_id}/approval": {
+   "post": {
+    "operationId": "support_approve_refund_api_v1_support_refunds__refund_id__approval_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "refund_id",
+      "required": true,
+      "schema": {
+       "maxLength": 64,
+       "minLength": 1,
+       "title": "Refund Id",
+       "type": "string"
+      }
+     },
+     {
+      "description": "A unique value per request, such as a UUID. Retrying with the same key and body returns the original response instead of applying the request again.",
+      "in": "header",
+      "name": "Idempotency-Key",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "maxLength": 128,
+         "minLength": 1,
+         "pattern": "^[\\x21-\\x7e]+$",
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "A unique value per request, such as a UUID. Retrying with the same key and body returns the original response instead of applying the request again.",
+       "title": "Idempotency-Key"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/RefundDecisionRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/RefundActionResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "401": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      },
+      "description": "Unauthorized"
+     },
+     "403": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      },
+      "description": "Forbidden"
+     },
+     "404": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      },
+      "description": "Not Found"
+     },
+     "409": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      },
+      "description": "The refund or case no longer allows this action, e.g. the version reviewed is not the current one"
+     },
+     "422": {
+      "description": "Invalid request, a refund the order does not allow, or a reused Idempotency-Key"
+     },
+     "503": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      },
+      "description": "Service Unavailable"
+     }
+    },
+    "summary": "Approve the current version of a refund proposal",
+    "tags": [
+     "Support desk"
+    ]
+   }
+  },
+  "/api/v1/support/refunds/{refund_id}/rejection": {
+   "post": {
+    "operationId": "support_reject_refund_api_v1_support_refunds__refund_id__rejection_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "refund_id",
+      "required": true,
+      "schema": {
+       "maxLength": 64,
+       "minLength": 1,
+       "title": "Refund Id",
+       "type": "string"
+      }
+     },
+     {
+      "description": "A unique value per request, such as a UUID. Retrying with the same key and body returns the original response instead of applying the request again.",
+      "in": "header",
+      "name": "Idempotency-Key",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "maxLength": 128,
+         "minLength": 1,
+         "pattern": "^[\\x21-\\x7e]+$",
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "A unique value per request, such as a UUID. Retrying with the same key and body returns the original response instead of applying the request again.",
+       "title": "Idempotency-Key"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/RefundRejectionRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/RefundActionResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "401": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      },
+      "description": "Unauthorized"
+     },
+     "403": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      },
+      "description": "Forbidden"
+     },
+     "404": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      },
+      "description": "Not Found"
+     },
+     "409": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      },
+      "description": "The refund or case no longer allows this action, e.g. the version reviewed is not the current one"
+     },
+     "422": {
+      "description": "Invalid request, a refund the order does not allow, or a reused Idempotency-Key"
+     },
+     "503": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      },
+      "description": "Service Unavailable"
+     }
+    },
+    "summary": "Reject the current version of a refund proposal",
+    "tags": [
+     "Support desk"
+    ]
+   }
+  },
+  "/api/v1/support/refunds/{refund_id}/versions": {
+   "post": {
+    "operationId": "support_revise_refund_api_v1_support_refunds__refund_id__versions_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "refund_id",
+      "required": true,
+      "schema": {
+       "maxLength": 64,
+       "minLength": 1,
+       "title": "Refund Id",
+       "type": "string"
+      }
+     },
+     {
+      "description": "A unique value per request, such as a UUID. Retrying with the same key and body returns the original response instead of applying the request again.",
+      "in": "header",
+      "name": "Idempotency-Key",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "maxLength": 128,
+         "minLength": 1,
+         "pattern": "^[\\x21-\\x7e]+$",
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "A unique value per request, such as a UUID. Retrying with the same key and body returns the original response instead of applying the request again.",
+       "title": "Idempotency-Key"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/RefundRevisionRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/RefundActionResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "401": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      },
+      "description": "Unauthorized"
+     },
+     "403": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      },
+      "description": "Forbidden"
+     },
+     "404": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      },
+      "description": "Not Found"
+     },
+     "409": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      },
+      "description": "The refund or case no longer allows this action, e.g. the version reviewed is not the current one"
+     },
+     "422": {
+      "description": "Invalid request, a refund the order does not allow, or a reused Idempotency-Key"
+     },
+     "503": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      },
+      "description": "Service Unavailable"
+     }
+    },
+    "summary": "Revise a refund proposal with a new version",
+    "tags": [
+     "Support desk"
+    ]
+   }
+  },
+  "/health": {
+   "get": {
+    "operationId": "health_health_get",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HealthResponse"
+        }
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "summary": "Health",
+    "tags": [
+     "Health"
+    ]
+   }
+  },
+  "/metrics": {
+   "get": {
+    "operationId": "read_metrics_metrics_get",
+    "responses": {
+     "200": {
+      "description": "Successful Response"
+     },
+     "401": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      },
+      "description": "Unauthorized"
+     },
+     "403": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorResponse"
+        }
+       }
+      },
+      "description": "Forbidden"
+     }
+    },
+    "summary": "Operational metrics in the Prometheus text format",
+    "tags": [
+     "Health"
+    ]
+   }
+  }
+ }
+}

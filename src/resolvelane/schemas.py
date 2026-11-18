@@ -44,6 +44,17 @@ class CustomerOrderView(_View):
     delivery_events: tuple[DeliveryEventView, ...]
 
 
+class OrderListView(BaseModel):
+    orders: list[CustomerOrderView]
+
+
+class PrincipalView(BaseModel):
+    """Who the bearer token belongs to, so a client can show the right screens."""
+
+    subject_id: str
+    role: Literal["customer", "support_agent", "operator"]
+
+
 class CitationView(_View):
     """The help center article version and section a reply relied on."""
 
@@ -113,11 +124,48 @@ class CaseView(_View):
     refunds: list[CustomerRefundView] = Field(default_factory=list)
 
 
+class CaseListEntryView(_View):
+    case_id: str
+    order_id: str | None
+    status: CaseStatus
+    issues: list[Issue]
+    opened_at: datetime
+
+
+class CaseListView(BaseModel):
+    cases: list[CaseListEntryView] = Field(description="The caller's cases, newest first")
+
+
 class ErrorResponse(BaseModel):
     detail: str
 
 
 # --- support desk: internal views for support agents --------------------------------
+
+class ToolCallView(_View):
+    name: str
+    ok: bool
+    latency_ms: float
+    error: str
+
+
+class ReplyTraceView(_View):
+    """How an assistant reply came about. Internal: never part of a customer view."""
+
+    written_by: Literal["agent", "rules"] = Field(
+        description="agent when the language model's reply was sent; rules when the rule-based reply was")
+    fallback: str = Field(description="Why the agent's reply was not sent, e.g. ungrounded_number, circuit_open "
+                                      "or case_changed; none when it was sent or no agent was asked")
+    recognition: str = Field(description="The recognition tier that decided the issues: llm, remote_embedding, "
+                                         "local_embedding, keywords or none")
+    issues: list[Issue] = Field(description="Issues recognized in the customer's message")
+    seconds: float = Field(description="Time to recognize the message and write the reply")
+    model: str | None
+    rounds: int = Field(description="Language model calls for the reply")
+    tools: list[ToolCallView]
+    skills: list[str] = Field(description="Handling guides given to the agent, as name@version")
+    repeat: bool = Field(description="Nearly the same as the assistant's previous reply")
+
 
 class SupportMessageView(_View):
     role: MessageRole
@@ -125,6 +173,7 @@ class SupportMessageView(_View):
     sent_at: datetime
     citations: list[CitationView]
     author_id: str | None
+    trace: ReplyTraceView | None = Field(description="For assistant replies recorded with one")
 
 
 class TransitionView(_View):
@@ -187,6 +236,7 @@ class SupportCaseView(_View):
     created_at: datetime
     waiting_since: datetime
     summary: str | None = Field(description="Model-written summary of older messages; derived, not a record")
+    order: CustomerOrderView | None = Field(description="The order record the case is about, once it is known")
     messages: list[SupportMessageView]
     transitions: list[TransitionView]
     refunds: list[RefundView]

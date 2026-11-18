@@ -228,13 +228,21 @@ def test_unreachable_server_offers_no_tools(hubs):
 
 def test_stdio_server_runs_as_a_subprocess(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-secret-not-passed-on")
-    hub = MCPHub(config(command=sys.executable, args=["-m", "resolvelane.simulator.courier_mcp"], timeout_s=10))
+    # PATH without this interpreter, as when the server is started without activating its
+    # environment: "{python}" still runs the server with the application's interpreter.
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    hub = MCPHub(config(command="{python}", args=["-m", "resolvelane.simulator.courier_mcp"], timeout_s=10))
     try:
         hub.start(wait_s=20)
         result = ToolGateway(external=hub).execute(ALIAS, {}, context())
     finally:
         hub.close()
     assert json.loads(result.content)["result"]["stage"] == "on_the_way"
+
+
+def test_example_configuration_runs_the_simulator_with_this_interpreter():
+    server = MCPConfig.model_validate_json(EXAMPLE.read_text()).servers[0]
+    assert server.command == "{python}"
 
 
 # --- in a reply ---------------------------------------------------------------------------

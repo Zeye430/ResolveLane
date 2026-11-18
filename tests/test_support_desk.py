@@ -8,6 +8,7 @@ import pytest
 from resolvelane.access import TokenRegistry
 from resolvelane.api import create_app
 from resolvelane.case_store import CaseStore
+from resolvelane.domain.case import Issue
 from resolvelane.reply_agent import AgentDraft
 
 NOW = datetime(2026, 3, 1, 12, 0, tzinfo=timezone.utc)
@@ -116,7 +117,25 @@ def test_agent_sees_internal_details(desk):
                                     "actor_role": "assistant", "actor_id": None,
                                     "note": "Rules: missing_item needs a support agent"}]
     assert case["summary"] is None
+    assert case["order"]["order_id"] == "demo-order-1001" and case["order"]["items"][0]["item_id"] == "item-1"
     desk.case("case-does-not-exist", expect=404)
+
+
+def test_case_without_a_known_order_has_no_order_record(desk):
+    case_id = desk.chat("My order arrived late.", order_id="demo-order-9999")["case_id"]
+    assert desk.case(case_id)["order"] is None
+
+
+def test_customer_lists_only_their_own_cases_newest_first(desk):
+    first = desk.chat("My order arrived late.")["case_id"]
+    second = desk.chat("One of my wraps is missing.")["case_id"]
+    desk.chat("Where is my order?", customer="demo-customer-102", order_id="demo-order-1002")
+    cases = desk.send("GET", "/api/v1/cases", "demo-customer-101").json()["cases"]
+    assert [item["case_id"] for item in cases] == [second, first]
+    assert cases[0]["order_id"] == "demo-order-1001" and cases[0]["issues"] == ["missing_item"]
+    assert "customer_id" not in cases[0] and "review_notes" not in cases[0]
+    assert len(desk.send("GET", "/api/v1/cases?limit=1", "demo-customer-101").json()["cases"]) == 1
+    desk.send("GET", "/api/v1/cases", "demo-agent-301", expect=403)
 
 
 def test_agent_reply_reaches_the_customer_without_internal_details(desk):
@@ -227,3 +246,65 @@ def test_assistant_sees_the_support_agents_message():
     assert (history[-1].role.value, history[-1].text) == ("support_agent", "I've passed this to the restaurant.")
     assert json.dumps([message.role.value for message in history]) == \
         '["customer", "assistant", "support_agent"]'
+
+
+# --- reply traces --------------------------------------------------------------------------------
+
+class TracedAgent:
+    """Answers with the given drafts in order; an exception is raised instead of answering."""
+
+    def __init__(self, *drafts):
+        self.drafts = list(drafts)
+        self.llm = type("LLM", (), {"model": "test-model"})()
+
+    def draft(self, request):
+        item = self.drafts.pop(0)
+        if isinstance(item, Exception):
+            raise item
+        return item
+
+
+def test_agent_sees_how_each_reply_came_about_and_customers_do_not():
+    from resolvelane.reply_agent import AgentFailed
+    from resolvelane.tools import ToolTrace
+
+    draft = AgentDraft("Sorry about the wrap; a support agent will review it.", None,
+                       [ToolTrace("get_support_policy", True, 12.34), ToolTrace("search_help_center", False, 3.0,
+                                                                                 "timeout")],
+                       2, skills=("missing-item@3",))
+    desk = Desk(reply_agent=TracedAgent(draft, AgentFailed("ungrounded_number")))
+    case_id = desk.chat("One of my wraps is missing.")["case_id"]
+    desk.chat("It was the vegetable wrap.", case_id=case_id)
+
+    replies = [message for message in desk.case(case_id)["messages"] if message["role"] == "assistant"]
+    first, second = (message["trace"] for message in replies)
+    assert first["written_by"] == "agent" and first["fallback"] == "none" and first["model"] == "test-model"
+    assert first["recognition"] == "keywords" and first["issues"] == ["missing_item"]
+    assert first["rounds"] == 2 and first["skills"] == ["missing-item@3"] and first["repeat"] is False
+    assert first["tools"] == [{"name": "get_support_policy", "ok": True, "latency_ms": 12.3, "error": ""},
+                              {"name": "search_help_center", "ok": False, "latency_ms": 3.0, "error": "timeout"}]
+    assert first["seconds"] >= 0
+    assert second["written_by"] == "rules" and second["fallback"] == "ungrounded_number"
+    assert second["model"] == "test-model" and second["tools"] == []
+    customer_messages = desk.send("GET", f"/api/v1/cases/{case_id}", "demo-customer-101").json()["messages"]
+    assert all("trace" not in message for message in customer_messages)
+    assert all(message["trace"] is None for message in desk.case(case_id)["messages"]
+               if message["role"] != "assistant")
+
+
+def test_rule_based_reply_without_an_agent_is_not_a_fallback(desk):
+    case_id = desk.chat("My order arrived late.")["case_id"]
+    trace = desk.case(case_id)["messages"][1]["trace"]
+    assert (trace["written_by"], trace["fallback"], trace["model"]) == ("rules", "none", None)
+
+
+def test_traces_survive_a_restart(tmp_path):
+    path = str(tmp_path / "cases.sqlite3")
+    store = CaseStore(path, clock=Clock())
+    desk = Desk.__new__(Desk)
+    desk.store, desk.app = store, create_app(TokenRegistry(TOKENS), case_store=store,
+                                             reply_agent=TracedAgent(AgentDraft("Noted.", None, [], 1)))
+    case_id = desk.chat("One of my wraps is missing.")["case_id"]
+    store.close()
+    trace = CaseStore(path).get(case_id).messages[1].trace
+    assert trace.written_by == "agent" and trace.issues == (Issue.MISSING_ITEM,) and trace.model == "test-model"

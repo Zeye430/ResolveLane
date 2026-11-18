@@ -3,7 +3,7 @@
     {
       "name": "courier",
       "transport": "stdio",
-      "command": "python",
+      "command": "{python}",
       "args": ["-m", "resolvelane.simulator.courier_mcp"],
       "timeout_s": 5,
       "max_result_chars": 2000,

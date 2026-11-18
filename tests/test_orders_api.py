@@ -56,6 +56,24 @@ def test_owner_reads_order_without_internal_ids(client):
     assert "merchant_id" not in body
 
 
+def test_customer_lists_only_their_own_orders(client):
+    response = client.get("/api/v1/orders", headers=auth(CUSTOMER_101))
+    assert response.status_code == 200
+    orders = response.json()["orders"]
+    assert [order["order_id"] for order in orders] == ["demo-order-1001"]
+    assert "customer_id" not in orders[0]
+    assert [order["order_id"] for order in client.get("/api/v1/orders", headers=auth(CUSTOMER_102)).json()["orders"]] \
+        == ["demo-order-1002"]
+    assert client.get("/api/v1/orders", headers=auth(SUPPORT_AGENT)).status_code == 403
+
+
+def test_token_owner_is_reported_for_clients(client):
+    assert client.get("/api/v1/me", headers=auth(CUSTOMER_101)).json() == {"subject_id": "demo-customer-101",
+                                                                            "role": "customer"}
+    assert client.get("/api/v1/me", headers=auth(SUPPORT_AGENT)).json()["role"] == "support_agent"
+    assert client.get("/api/v1/me").status_code == 401
+
+
 def test_another_customers_order_looks_identical_to_an_unknown_order(client):
     denied = client.get("/api/v1/orders/demo-order-1001", headers=auth(CUSTOMER_102))
     unknown = client.get("/api/v1/orders/demo-order-9999", headers=auth(CUSTOMER_102))
