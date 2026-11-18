@@ -17,7 +17,7 @@ from resolvelane import metrics
 from resolvelane.access import Principal, Role, TokenRegistry, load_token_registry
 from resolvelane.case_store import CaseStore, load_case_store
 from resolvelane.knowledge import HelpCenter
-from resolvelane.llm import load_llm_provider
+from resolvelane.llm import load_llm_provider, load_prices
 from resolvelane.memory import load_summary_queue
 from resolvelane.payments import PaymentProvider, load_payment_dispatcher
 from resolvelane.recognition import IssueRecognizer, load_local_embedder, load_recognizer
@@ -131,6 +131,7 @@ def create_app(token_registry: TokenRegistry | None = None, order_source: OrderS
     app.state.case_store = case_store if case_store is not None else owned_store
     # Recognition and reply writing share one provider, so they share its circuit breaker too.
     # Recognition and help center search share the local embedding model, loaded once.
+    load_prices()  # costs in metrics and reply traces; checked at start-up
     llm = load_llm_provider() if recognizer is None or reply_agent is None else None
     local_embedder = load_local_embedder() if recognizer is None or reply_agent is None else None
     app.state.recognizer = (recognizer if recognizer is not None

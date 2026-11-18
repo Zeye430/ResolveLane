@@ -149,6 +149,17 @@ class ToolCallView(_View):
     error: str
 
 
+class ModelUsageView(_View):
+    calls: int = Field(description="Language model calls answered, for recognition and the reply, including "
+                                   "answers that were not used")
+    input_tokens: int
+    output_tokens: int
+    cache_read_tokens: int
+    cache_write_tokens: int
+    cost_usd: float | None = Field(description="Estimated from RESOLVELANE_MODEL_PRICES; null when a model "
+                                               "has no configured price")
+
+
 class ReplyTraceView(_View):
     """How an assistant reply came about. Internal: never part of a customer view."""
 
@@ -165,6 +176,8 @@ class ReplyTraceView(_View):
     tools: list[ToolCallView]
     skills: list[str] = Field(description="Handling guides given to the agent, as name@version")
     repeat: bool = Field(description="Nearly the same as the assistant's previous reply")
+    usage: ModelUsageView | None = Field(default=None, description="Null for replies stored before usage "
+                                                                    "was recorded")
 
 
 class SupportMessageView(_View):
@@ -324,6 +337,26 @@ class EvalSecondsView(_View):
     p95: float
 
 
+class EvalModelCallsView(_View):
+    calls: int
+    input_tokens: int
+    output_tokens: int
+    cache_read_tokens: int
+    cache_write_tokens: int
+    cost_usd: float | None = Field(description="Null when a model has no configured price")
+
+
+class EvalAppUsageView(EvalModelCallsView):
+    tokens_per_reply: int
+    cost_per_reply_usd: float | None
+    cost_per_case_usd: float | None = Field(description="Per scenario run, which is one case")
+
+
+class EvalUsageView(_View):
+    app: EvalAppUsageView = Field(description="The application's model calls: recognition and replies")
+    judge: EvalModelCallsView = Field(description="The judge's calls, which a production system does not make")
+
+
 class EvalRunView(_View):
     """One saved evaluation run, without its replies."""
 
@@ -338,6 +371,7 @@ class EvalRunView(_View):
     counts: EvalCountsView
     fallbacks: dict[str, int] = Field(description="Rule-based replies, by why the agent's reply was not sent")
     seconds: EvalSecondsView
+    usage: EvalUsageView | None = Field(default=None, description="Model calls and cost, when recorded")
 
 
 class EvalReportListView(BaseModel):
@@ -377,6 +411,7 @@ class EvalTurnView(_View):
     seconds: float
     checks: list[EvalCheckView]
     judgement: EvalJudgementView | None
+    usage: ModelUsageView | None = Field(default=None, description="The application's model calls for this reply")
 
 
 class EvalScenarioView(_View):

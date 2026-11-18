@@ -462,6 +462,82 @@
     "title": "ErrorResponse",
     "type": "object"
    },
+   "EvalAppUsageView": {
+    "properties": {
+     "cache_read_tokens": {
+      "title": "Cache Read Tokens",
+      "type": "integer"
+     },
+     "cache_write_tokens": {
+      "title": "Cache Write Tokens",
+      "type": "integer"
+     },
+     "calls": {
+      "title": "Calls",
+      "type": "integer"
+     },
+     "cost_per_case_usd": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "Per scenario run, which is one case",
+      "title": "Cost Per Case Usd"
+     },
+     "cost_per_reply_usd": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Cost Per Reply Usd"
+     },
+     "cost_usd": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "Null when a model has no configured price",
+      "title": "Cost Usd"
+     },
+     "input_tokens": {
+      "title": "Input Tokens",
+      "type": "integer"
+     },
+     "output_tokens": {
+      "title": "Output Tokens",
+      "type": "integer"
+     },
+     "tokens_per_reply": {
+      "title": "Tokens Per Reply",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "calls",
+     "input_tokens",
+     "output_tokens",
+     "cache_read_tokens",
+     "cache_write_tokens",
+     "cost_usd",
+     "tokens_per_reply",
+     "cost_per_reply_usd",
+     "cost_per_case_usd"
+    ],
+    "title": "EvalAppUsageView",
+    "type": "object"
+   },
    "EvalCheckView": {
     "properties": {
      "detail": {
@@ -537,6 +613,52 @@
      "error"
     ],
     "title": "EvalJudgementView",
+    "type": "object"
+   },
+   "EvalModelCallsView": {
+    "properties": {
+     "cache_read_tokens": {
+      "title": "Cache Read Tokens",
+      "type": "integer"
+     },
+     "cache_write_tokens": {
+      "title": "Cache Write Tokens",
+      "type": "integer"
+     },
+     "calls": {
+      "title": "Calls",
+      "type": "integer"
+     },
+     "cost_usd": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "Null when a model has no configured price",
+      "title": "Cost Usd"
+     },
+     "input_tokens": {
+      "title": "Input Tokens",
+      "type": "integer"
+     },
+     "output_tokens": {
+      "title": "Output Tokens",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "calls",
+     "input_tokens",
+     "output_tokens",
+     "cache_read_tokens",
+     "cache_write_tokens",
+     "cost_usd"
+    ],
+    "title": "EvalModelCallsView",
     "type": "object"
    },
    "EvalModelsView": {
@@ -679,6 +801,17 @@
       },
       "title": "Turns",
       "type": "array"
+     },
+     "usage": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/EvalUsageView"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "Model calls and cost, when recorded"
      }
     },
     "required": [
@@ -755,6 +888,17 @@
       "description": "Hash of the scenarios, judge instructions and models; runs are comparable only with the same suite",
       "title": "Suite Id",
       "type": "string"
+     },
+     "usage": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/EvalUsageView"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "Model calls and cost, when recorded"
      }
     },
     "required": [
@@ -856,6 +1000,17 @@
       "title": "Step",
       "type": "integer"
      },
+     "usage": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/ModelUsageView"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "The application's model calls for this reply"
+     },
      "written_by_agent": {
       "title": "Written By Agent",
       "type": "boolean"
@@ -874,6 +1029,24 @@
      "judgement"
     ],
     "title": "EvalTurnView",
+    "type": "object"
+   },
+   "EvalUsageView": {
+    "properties": {
+     "app": {
+      "$ref": "#/components/schemas/EvalAppUsageView",
+      "description": "The application's model calls: recognition and replies"
+     },
+     "judge": {
+      "$ref": "#/components/schemas/EvalModelCallsView",
+      "description": "The judge's calls, which a production system does not make"
+     }
+    },
+    "required": [
+     "app",
+     "judge"
+    ],
+    "title": "EvalUsageView",
     "type": "object"
    },
    "EvalVerdictView": {
@@ -942,6 +1115,53 @@
     ],
     "title": "MessageRole",
     "type": "string"
+   },
+   "ModelUsageView": {
+    "properties": {
+     "cache_read_tokens": {
+      "title": "Cache Read Tokens",
+      "type": "integer"
+     },
+     "cache_write_tokens": {
+      "title": "Cache Write Tokens",
+      "type": "integer"
+     },
+     "calls": {
+      "description": "Language model calls answered, for recognition and the reply, including answers that were not used",
+      "title": "Calls",
+      "type": "integer"
+     },
+     "cost_usd": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "Estimated from RESOLVELANE_MODEL_PRICES; null when a model has no configured price",
+      "title": "Cost Usd"
+     },
+     "input_tokens": {
+      "title": "Input Tokens",
+      "type": "integer"
+     },
+     "output_tokens": {
+      "title": "Output Tokens",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "calls",
+     "input_tokens",
+     "output_tokens",
+     "cache_read_tokens",
+     "cache_write_tokens",
+     "cost_usd"
+    ],
+    "title": "ModelUsageView",
+    "type": "object"
    },
    "OrderItemView": {
     "properties": {
@@ -1620,6 +1840,17 @@
       },
       "title": "Tools",
       "type": "array"
+     },
+     "usage": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/ModelUsageView"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "Null for replies stored before usage was recorded"
      },
      "written_by": {
       "description": "agent when the language model's reply was sent; rules when the rule-based reply was",

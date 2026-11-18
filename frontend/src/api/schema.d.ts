@@ -503,6 +503,33 @@ export interface components {
             /** Detail */
             detail: string;
         };
+        /** EvalAppUsageView */
+        EvalAppUsageView: {
+            /** Cache Read Tokens */
+            cache_read_tokens: number;
+            /** Cache Write Tokens */
+            cache_write_tokens: number;
+            /** Calls */
+            calls: number;
+            /**
+             * Cost Per Case Usd
+             * @description Per scenario run, which is one case
+             */
+            cost_per_case_usd: number | null;
+            /** Cost Per Reply Usd */
+            cost_per_reply_usd: number | null;
+            /**
+             * Cost Usd
+             * @description Null when a model has no configured price
+             */
+            cost_usd: number | null;
+            /** Input Tokens */
+            input_tokens: number;
+            /** Output Tokens */
+            output_tokens: number;
+            /** Tokens Per Reply */
+            tokens_per_reply: number;
+        };
         /** EvalCheckView */
         EvalCheckView: {
             /** Detail */
@@ -546,6 +573,24 @@ export interface components {
             verdicts: {
                 [key: string]: components["schemas"]["EvalVerdictView"];
             };
+        };
+        /** EvalModelCallsView */
+        EvalModelCallsView: {
+            /** Cache Read Tokens */
+            cache_read_tokens: number;
+            /** Cache Write Tokens */
+            cache_write_tokens: number;
+            /** Calls */
+            calls: number;
+            /**
+             * Cost Usd
+             * @description Null when a model has no configured price
+             */
+            cost_usd: number | null;
+            /** Input Tokens */
+            input_tokens: number;
+            /** Output Tokens */
+            output_tokens: number;
         };
         /** EvalModelsView */
         EvalModelsView: {
@@ -628,6 +673,8 @@ export interface components {
             suite_id: string;
             /** Turns */
             turns: components["schemas"]["EvalTurnView"][];
+            /** @description Model calls and cost, when recorded */
+            usage?: components["schemas"]["EvalUsageView"] | null;
         };
         /**
          * EvalRunView
@@ -676,6 +723,8 @@ export interface components {
              * @description Hash of the scenarios, judge instructions and models; runs are comparable only with the same suite
              */
             suite_id: string;
+            /** @description Model calls and cost, when recorded */
+            usage?: components["schemas"]["EvalUsageView"] | null;
         };
         /** EvalScenarioView */
         EvalScenarioView: {
@@ -716,8 +765,17 @@ export interface components {
              * @description The step's number in the scenario, from 1
              */
             step: number;
+            /** @description The application's model calls for this reply */
+            usage?: components["schemas"]["ModelUsageView"] | null;
             /** Written By Agent */
             written_by_agent: boolean;
+        };
+        /** EvalUsageView */
+        EvalUsageView: {
+            /** @description The application's model calls: recognition and replies */
+            app: components["schemas"]["EvalAppUsageView"];
+            /** @description The judge's calls, which a production system does not make */
+            judge: components["schemas"]["EvalModelCallsView"];
         };
         /** EvalVerdictView */
         EvalVerdictView: {
@@ -746,6 +804,27 @@ export interface components {
          * @enum {string}
          */
         MessageRole: "customer" | "assistant" | "support_agent" | "system";
+        /** ModelUsageView */
+        ModelUsageView: {
+            /** Cache Read Tokens */
+            cache_read_tokens: number;
+            /** Cache Write Tokens */
+            cache_write_tokens: number;
+            /**
+             * Calls
+             * @description Language model calls answered, for recognition and the reply, including answers that were not used
+             */
+            calls: number;
+            /**
+             * Cost Usd
+             * @description Estimated from RESOLVELANE_MODEL_PRICES; null when a model has no configured price
+             */
+            cost_usd: number | null;
+            /** Input Tokens */
+            input_tokens: number;
+            /** Output Tokens */
+            output_tokens: number;
+        };
         /** OrderItemView */
         OrderItemView: {
             /** Item Id */
@@ -1047,6 +1126,8 @@ export interface components {
             skills: string[];
             /** Tools */
             tools: components["schemas"]["ToolCallView"][];
+            /** @description Null for replies stored before usage was recorded */
+            usage?: components["schemas"]["ModelUsageView"] | null;
             /**
              * Written By
              * @description agent when the language model's reply was sent; rules when the rule-based reply was

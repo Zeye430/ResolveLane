@@ -23,7 +23,7 @@ import anthropic
 
 from resolvelane.case_store import CaseStore
 from resolvelane.domain.case import CaseMessage, CaseSummary, EarlierCase
-from resolvelane.llm import REQUEST_ERRORS, LLMProvider
+from resolvelane.llm import REQUEST_ERRORS, LLMProvider, create_message
 
 logger = logging.getLogger("resolvelane.memory")
 
@@ -84,8 +84,8 @@ class CaseSummarizer:
         if ticket is None:
             raise SummaryFailed("circuit_open")
         try:
-            response = self.llm.client.messages.create(
-                model=self.llm.model, max_tokens=1024, system=SUMMARY_PROMPT,
+            response = create_message(
+                self.llm.client, "summary", model=self.llm.model, max_tokens=1024, system=SUMMARY_PROMPT,
                 messages=[{"role": "user", "content": prompt}])
         except anthropic.APIConnectionError as error:
             self.llm.breaker.failed(ticket)

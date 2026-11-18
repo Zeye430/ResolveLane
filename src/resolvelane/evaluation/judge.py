@@ -18,6 +18,8 @@ from dataclasses import dataclass
 
 import anthropic
 
+from resolvelane.llm import create_message
+
 logger = logging.getLogger("resolvelane.evaluation.judge")
 
 CRITERIA = {
@@ -167,8 +169,8 @@ class Judge:
         budget = self.max_tokens
         for _ in range(2):
             try:
-                response = self.client.messages.create(model=self.model, max_tokens=budget,
-                                                       messages=[{"role": "user", "content": content}])
+                response = create_message(self.client, "judge", model=self.model, max_tokens=budget,
+                                          messages=[{"role": "user", "content": content}])
             except anthropic.APIError as failure:
                 # The provider's message may repeat the request; only the type is reported.
                 return Judgement({}, f"request_failed: {type(failure).__name__}")

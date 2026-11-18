@@ -146,6 +146,11 @@ def main(argv=None) -> int:
         print(f"  {name:<26} {value:.0%}")
     print(f"  replies {summary['counts']['turns']}, judge failures {summary['counts']['judge_failures']}, "
           f"seconds per reply mean {summary['seconds']['mean']} p95 {summary['seconds']['p95']}")
+    app, judge_usage = summary["usage"]["app"], summary["usage"]["judge"]
+    priced = (f", about ${app['cost_per_reply_usd']:.4f} per reply and ${app['cost_per_case_usd']:.4f} per case"
+              if app["cost_per_reply_usd"] is not None else " (no price configured for the model)")
+    print(f"  model calls {app['calls']}, {app['tokens_per_reply']} tokens per reply{priced}; "
+          f"the judge used {judge_usage['input_tokens'] + judge_usage['output_tokens']} tokens")
     if summary["fallbacks"]:
         print(f"  rule-based replies: {summary['fallbacks']}")
     for item in summary["failed_checks"]:

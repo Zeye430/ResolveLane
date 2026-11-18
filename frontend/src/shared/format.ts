@@ -36,6 +36,16 @@ export function humanize(value: string): string {
   return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
+export const count = (value: number) => value.toLocaleString("en-US");
+
+/** An estimated cost in US dollars, with enough digits for fractions of a cent. */
+export function usd(value: number): string {
+  if (value === 0) return "$0";
+  if (value < 0.01) return `$${value.toFixed(4)}`;
+  if (value < 1) return `$${value.toFixed(3)}`;
+  return `$${value.toFixed(2)}`;
+}
+
 /** A long generated ID shortened for lists; the full ID goes in a tooltip. */
 export function shortId(id: string, keep = 8): string {
   const at = id.lastIndexOf("-");

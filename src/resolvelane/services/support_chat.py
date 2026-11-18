@@ -36,10 +36,11 @@ from resolvelane import metrics
 from resolvelane.assistant import AssistantReply, respond
 from resolvelane.case_store import CaseStore, Receipt
 from resolvelane.domain.case import (Case, CaseMessage, CaseStatus, CaseSummary, EarlierCase, Issue, MessageRole,
-                                     ReplyTrace, ToolCall, ordered_issues)
+                                     ModelUsage, ReplyTrace, ToolCall, ordered_issues)
 from resolvelane.domain.delivery import Order
 from resolvelane.domain.knowledge import Citation
 from resolvelane.domain.refund import RefundStatus
+from resolvelane.llm import Meter, metered
 from resolvelane.memory import SummaryQueue, earlier_cases, needs_summary, recent_messages
 from resolvelane.recognition import IssueRecognizer, Recognition
 from resolvelane.refunds import (RefundInvalid, RefundProposal, Refunded, money, new_refund, new_version,
@@ -254,8 +255,14 @@ def _record(cases: CaseStore, case: Case, message: str, reply: AssistantReply, t
     case.messages.append(CaseMessage(MessageRole.ASSISTANT, reply.reply, now, reply.citations, trace=trace))
 
 
+def _usage(meter: Meter) -> ModelUsage:
+    usage, cost = meter.usage(), meter.cost()
+    return ModelUsage(len(meter.calls), usage.input_tokens, usage.output_tokens, usage.cache_read_tokens,
+                      usage.cache_write_tokens, None if cost is None else round(cost, 6))
+
+
 def _trace(recognition: Recognition, draft: AgentDraft | None, fallback: str, agent: ReplyAgent | None,
-           seconds: float, repeat: bool) -> ReplyTrace:
+           seconds: float, repeat: bool, meter: Meter) -> ReplyTrace:
     llm = getattr(agent, "llm", None)
     return ReplyTrace(
         written_by="agent" if draft else "rules", fallback=fallback, recognition=recognition.source,
@@ -264,7 +271,7 @@ def _trace(recognition: Recognition, draft: AgentDraft | None, fallback: str, ag
         rounds=draft.rounds if draft else 0,
         tools=tuple(ToolCall(trace.name, trace.ok, round(trace.latency_ms, 1), trace.error)
                     for trace in draft.tool_traces) if draft else (),
-        skills=tuple(draft.skills) if draft else (), repeat=repeat)
+        skills=tuple(draft.skills) if draft else (), repeat=repeat, usage=_usage(meter))
 
 
 def _commit(cases: CaseStore, case: Case, reply: AssistantReply, customer_id: str, key: str | None,
@@ -295,11 +302,13 @@ def handle_message(cases: CaseStore, orders: OrderSource, recognizer: IssueRecog
         earlier = earlier_cases(cases, customer_id, case_id, cases.clock())
 
     # Phase 2: slow work without the lock, so other customers' messages are not blocked.
+    # Every model call made for this message is metered, including answers that are not used.
     started = time.perf_counter()
-    recognition = recognizer.recognize(message, history)
-    plan = _plan(orders, customer_id, state, recognition, order_id)
-    draft, fallback = _draft(reply_agent, cases, plan, customer_id, message, history, summary, earlier, refunds,
-                             state, cases.clock())
+    with metered() as meter:
+        recognition = recognizer.recognize(message, history)
+        plan = _plan(orders, customer_id, state, recognition, order_id)
+        draft, fallback = _draft(reply_agent, cases, plan, customer_id, message, history, summary, earlier,
+                                 refunds, state, cases.clock())
     seconds = time.perf_counter() - started
     metrics.RECOGNITIONS.labels(recognition.source).inc()
 
@@ -331,7 +340,7 @@ def handle_message(cases: CaseStore, orders: OrderSource, recognizer: IssueRecog
                         plan.lookup.access.value, customer_id, plan.looked_up_order_id)
         if plan.redirect:
             metrics.REPLIES.labels("rules", "none").inc()
-            _record(cases, case, message, plan.reply, _trace(recognition, None, "none", None, seconds, False))
+            _record(cases, case, message, plan.reply, _trace(recognition, None, "none", None, seconds, False, meter))
             return _commit(cases, case, plan.reply, customer_id, idempotency_key, fingerprint)
 
         review_request = draft.review_request if draft else None
@@ -354,7 +363,7 @@ def handle_message(cases: CaseStore, orders: OrderSource, recognizer: IssueRecog
             metrics.REPLY_REPEATS.labels(source).inc()
             logger.info("reply_repeat case=%s source=%s", case.case_id, source)
 
-        _record(cases, case, message, reply, _trace(recognition, draft, fallback, reply_agent, seconds, repeat))
+        _record(cases, case, message, reply, _trace(recognition, draft, fallback, reply_agent, seconds, repeat, meter))
         case.issues = ordered_issues(case.issues + plan.new_issues)
         if plan.order is not None:
             # Bind only an order the customer may access, never one that failed the lookup.

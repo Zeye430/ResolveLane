@@ -38,6 +38,18 @@ describe("EvaluationPage", () => {
     expect(screen.getByText("Scenarios (1 of 2 with failures)")).toBeInTheDocument();
   });
 
+  it("shows the cost per reply and per case, and the judge apart", async () => {
+    const calls = { input_tokens: 40000, output_tokens: 6000, cache_read_tokens: 0, cache_write_tokens: 0 };
+    const priced = { ...latest, usage: {
+      app: { calls: 30, ...calls, cost_usd: 0.07, tokens_per_reply: 2091, cost_per_reply_usd: 0.0032,
+             cost_per_case_usd: 0.0047 },
+      judge: { calls: 22, ...calls, cost_usd: null } } };
+    show({ reports: [priced], baseline: null, tolerance: 0.1, unreadable: 0 });
+    expect(await screen.findByText(/2,091 tokens per reply/)).toBeInTheDocument();
+    expect(screen.getByText(/\$0\.0032 per reply · \$0\.0047 per case/)).toBeInTheDocument();
+    expect(screen.getByText(/judge 46,000 tokens/)).toBeInTheDocument();
+  });
+
   it("explains how to make the first run", async () => {
     show({ reports: [], baseline: null, tolerance: 0.1, unreadable: 1 });
     expect(await screen.findByText("python -m resolvelane.evaluation")).toBeInTheDocument();

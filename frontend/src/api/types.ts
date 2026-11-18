@@ -27,3 +27,4 @@ export type EvalRun = Schemas["EvalRunView"];
 export type EvalReport = Schemas["EvalReportView"];
 export type EvalReportList = Schemas["EvalReportListView"];
 export type EvalTurn = Schemas["EvalTurnView"];
+export type ModelUsage = Schemas["ModelUsageView"];

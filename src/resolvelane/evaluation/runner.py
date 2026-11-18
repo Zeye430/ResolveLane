@@ -25,10 +25,12 @@ import httpx
 from resolvelane.access import TokenRegistry
 from resolvelane.api import create_app
 from resolvelane.case_store import CaseStore
+from resolvelane.domain.case import MessageRole
 from resolvelane.evaluation import judge as judge_module
 from resolvelane.evaluation.judge import Judgement, Material
 from resolvelane.evaluation.reports import compare, load_report  # noqa: F401  (also used from here)
 from resolvelane.evaluation.scenarios import Scenario, Step, Suite
+from resolvelane.llm import Usage, metered
 from resolvelane.payments import send_due
 from resolvelane.refunds import open_refund
 from resolvelane.reply_agent import AgentFailed, case_facts
@@ -39,6 +41,7 @@ from resolvelane.simulator.order_source import InMemoryOrderSource
 from resolvelane.simulator.payment_provider import SimulatedPaymentProvider
 
 AGENT_ID = "eval-agent-901"
+TOKEN_FIELDS = ("input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens")
 # Invented credentials, valid only inside one evaluation run.
 TOKENS = {f"eval-token-{customer}-xxxxxxxxxxxx": {"subject_id": customer, "role": "customer"}
           for customer in ("demo-customer-101", "demo-customer-102", "demo-customer-103", "demo-customer-104")}
@@ -86,6 +89,43 @@ class TurnResult:
     seconds: float
     checks: list[Check] = field(default_factory=list)
     judgement: Judgement | None = None
+    usage: dict | None = None        # the application's model calls for this reply, from its trace
+    judge_usage: dict | None = None  # the judge's calls scoring it
+
+
+def _tokens(usage: Usage) -> dict[str, int]:
+    return {"input_tokens": usage.input_tokens, "output_tokens": usage.output_tokens,
+            "cache_read_tokens": usage.cache_read_tokens, "cache_write_tokens": usage.cache_write_tokens}
+
+
+def _reply_usage(case) -> dict | None:
+    replies = [message for message in case.messages if message.role is MessageRole.ASSISTANT]
+    trace = replies[-1].trace if replies else None
+    return asdict(trace.usage) if trace is not None and trace.usage is not None else None
+
+
+def _total(items: Sequence[dict]) -> dict:
+    """Calls, tokens and cost added up; the cost is None when any item has none."""
+    total = {"calls": sum(item["calls"] for item in items),
+             **{name: sum(item[name] for item in items) for name in TOKEN_FIELDS}}
+    costs = [item["cost_usd"] for item in items]
+    total["cost_usd"] = None if not items or None in costs else round(sum(costs), 6)
+    return total
+
+
+def _usage_summary(results: Sequence[TurnResult]) -> dict:
+    app = _total([result.usage for result in results if result.usage is not None])
+    replies = len(results)
+    cases = len({(result.scenario, result.run) for result in results})
+    tokens = sum(app[name] for name in TOKEN_FIELDS)
+    cost = app["cost_usd"]
+    return {
+        "app": {**app,
+                "tokens_per_reply": round(tokens / replies) if replies else 0,
+                "cost_per_reply_usd": round(cost / replies, 6) if cost is not None and replies else None,
+                "cost_per_case_usd": round(cost / cases, 6) if cost is not None and cases else None},
+        "judge": _total([result.judge_usage for result in results if result.judge_usage is not None]),
+    }
 
 
 def _refund_draft(case) -> dict[str, int] | None:
@@ -188,9 +228,13 @@ class Evaluation:
                 result = TurnResult(scenario.id, run, number, step.customer, turn["reply"], written, fallback,
                                     round(seconds, 2), skipped + _checks(step, turn, store.get(case_id), written))
                 skipped = []
+                result.usage = _reply_usage(store.get(case_id))
                 material = _material(self.agent, turn) if self.agent else None
                 if self.judge is not None and material is not None:
-                    result.judgement = self.judge.judge(material)
+                    with metered() as meter:
+                        result.judgement = self.judge.judge(material)
+                    usage, cost = meter.usage(), meter.cost()
+                    result.judge_usage = {"calls": len(meter.calls), **_tokens(usage), "cost_usd": cost}
                 results.append(result)
         finally:
             if app.state.summaries is not None:
@@ -262,6 +306,7 @@ def summarize(results: Sequence[TurnResult]) -> dict:
         "counts": {"turns": len(results), "checks": len(checks), "judged": len(judged),
                    "judge_failures": sum(1 for result in results if result.judgement and result.judgement.failed)},
         "fallbacks": dict(Counter(result.fallback for result in results if not result.written_by_agent)),
+        "usage": _usage_summary(results),
         "seconds": {"mean": round(statistics.mean(seconds), 2) if seconds else 0,
                     "p95": seconds[min(len(seconds) - 1, int(len(seconds) * 0.95))] if seconds else 0},
         "failed_checks": [{"scenario": result.scenario, "run": result.run, "step": result.step,

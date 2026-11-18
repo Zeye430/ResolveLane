@@ -22,7 +22,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from resolvelane.domain.case import (Case, CaseMessage, CaseStatus, CaseSummary, CaseTransition, EarlierCase, Issue,
-                                     MessageRole, ReplyTrace, ToolCall)
+                                     MessageRole, ModelUsage, ReplyTrace, ToolCall)
 from resolvelane.domain.knowledge import Citation
 from resolvelane.domain.refund import Payment, PaymentStatus, Refund, RefundLine, RefundStatus, RefundVersion
 
@@ -179,9 +179,11 @@ def _trace(text: str | None) -> ReplyTrace | None:
     if text is None:
         return None
     data = json.loads(text)
+    usage = data.get("usage")
     return ReplyTrace(**{**data, "issues": tuple(Issue(value) for value in data["issues"]),
                          "tools": tuple(ToolCall(**call) for call in data["tools"]),
-                         "skills": tuple(data["skills"])})
+                         "skills": tuple(data["skills"]),
+                         "usage": ModelUsage(**usage) if usage else None})
 
 
 @dataclass(frozen=True)

@@ -28,7 +28,7 @@ from resolvelane.assistant import detect_issues
 from resolvelane.domain.case import CaseMessage, Issue, ordered_issues
 from resolvelane.embeddings import (CALIBRATED_THRESHOLDS, EmbeddingError, EmbeddingMatcher, LocalEmbedder,
                                     RemoteEmbedder)
-from resolvelane.llm import DEFAULT_MODEL, REQUEST_ERRORS, LLMProvider, load_llm_provider
+from resolvelane.llm import DEFAULT_MODEL, REQUEST_ERRORS, LLMProvider, create_message, load_llm_provider
 from resolvelane.resilience import CircuitBreaker
 
 logger = logging.getLogger("resolvelane.recognition")
@@ -198,8 +198,8 @@ class LLMTier:
 
     def classify(self, message: str, history: Sequence[CaseMessage] = ()) -> list[Issue] | None:
         try:
-            response = self.client.messages.create(
-                model=self.model,
+            response = create_message(
+                self.client, "recognition", model=self.model,
                 max_tokens=2048,  # room for the model's thinking before a short JSON answer
                 system=SYSTEM_PROMPT,
                 messages=[{"role": "user", "content": self._prompt(message, history)}],

@@ -1,5 +1,5 @@
-import type { ReplyTrace } from "../api/types";
-import { humanize, issueLabel } from "../shared/format";
+import type { ModelUsage, ReplyTrace } from "../api/types";
+import { count, humanize, issueLabel, usd } from "../shared/format";
 
 // Why the agent's reply was replaced by the rule-based one. Reasons not listed (provider errors
 // such as status_529 or APITimeoutError) are shown as they are.
@@ -24,6 +24,19 @@ const TIERS: Record<string, string> = {
 
 export function fallbackText(reason: string): string {
   return FALLBACKS[reason] ?? reason;
+}
+
+/** The model calls behind one reply, counting answers that were not used. */
+export function UsageText({ usage }: { usage: ModelUsage | null }) {
+  if (!usage) return <span className="muted">not recorded</span>;
+  if (usage.calls === 0) return <>no model calls</>;
+  const parts = [`${usage.calls} model call${usage.calls > 1 ? "s" : ""}`, `${count(usage.input_tokens)} in`,
+                 `${count(usage.output_tokens)} out tokens`];
+  if (usage.cache_read_tokens > 0) parts.push(`${count(usage.cache_read_tokens)} cached`);
+  return (
+    <>{parts.join(" · ")} · {usage.cost_usd === null
+      ? <span className="muted">no price configured</span> : usd(usage.cost_usd)}</>
+  );
 }
 
 /** How an assistant reply came about: who wrote it, why rules took over, what the agent used. */
@@ -55,6 +68,8 @@ export function ReplyTraceView({ trace }: { trace: ReplyTrace }) {
           </ul>
         </dd></>}
         {trace.skills.length > 0 && <><dt>Guides</dt><dd className="mono">{trace.skills.join(", ")}</dd></>}
+        <dt>Usage</dt>
+        <dd><UsageText usage={trace.usage ?? null} /></dd>
         {!agent && !fellBack && <><dt>Why rules</dt><dd>No language model is configured, or rules decide this reply.</dd></>}
       </dl>
     </details>

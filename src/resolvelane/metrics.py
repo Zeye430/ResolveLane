@@ -51,6 +51,14 @@ REFUNDS_APPROVED_MINOR = Counter("resolvelane_refunds_approved_minor", "Approved
 PAYMENT_ATTEMPTS = Counter("resolvelane_payment_attempts",
                            "Payment attempts by outcome: succeeded, declined, no_answer, or checked (an unconfirmed "
                            "payment looked up without an answer)", ["outcome"], registry=REGISTRY)
+LLM_CALLS = Counter("resolvelane_llm_calls", "Language model calls answered, by purpose and model",
+                    ["purpose", "model"], registry=REGISTRY)
+LLM_TOKENS = Counter("resolvelane_llm_tokens",
+                     "Tokens reported by the language model provider, by purpose, model and kind (input, output, "
+                     "cache_read, cache_write)", ["purpose", "model", "kind"], registry=REGISTRY)
+LLM_COST_USD = Counter("resolvelane_llm_cost_usd",
+                       "Estimated language model cost in US dollars from configured prices; models without a "
+                       "price are not counted", ["purpose", "model"], registry=REGISTRY)
 PROVIDER_SECONDS = Histogram("resolvelane_payment_provider_seconds", "Payment provider call duration",
                              buckets=(0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 30), registry=REGISTRY)
 

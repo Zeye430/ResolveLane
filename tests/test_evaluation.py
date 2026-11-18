@@ -258,3 +258,40 @@ def test_a_saved_report_reads_back_for_the_evaluation_page(tmp_path):
     assert read is not None and read.commit == "abc1234" and read.counts.judged == 1
     assert read.turns[0].judgement.verdicts["focused"].reason == "why"
     assert [item.id for item in read.scenarios] == [saved["scenarios"][0]["id"]]
+
+
+def _spend(purpose, model, input_tokens, output_tokens):
+    from resolvelane.llm import create_message
+    answer = SimpleNamespace(usage=SimpleNamespace(input_tokens=input_tokens, output_tokens=output_tokens), content=[])
+    create_message(SimpleNamespace(messages=SimpleNamespace(create=lambda **request: answer)), purpose,
+                   model=model, messages=[])
+
+
+class SpendingAgent(ScriptedAgent):
+    def draft(self, request):
+        _spend("reply", "agent-model", 2000, 100)
+        return super().draft(request)
+
+
+class SpendingJudge(ScriptedJudge):
+    def judge(self, material):
+        _spend("judge", "judge-model", 3000, 300)
+        return super().judge(material)
+
+
+def test_a_report_counts_the_application_and_the_judge_apart_with_cost_per_reply_and_case(monkeypatch):
+    monkeypatch.setenv("RESOLVELANE_MODEL_PRICES", '{"agent-model": {"input": 1.0, "output": 5.0}}')
+    try:
+        evaluation = Evaluation(KeywordRecognizer(), SpendingAgent(draft("Late by 15 minutes."),
+                                                                   draft("Late by 15 minutes.")), SpendingJudge())
+        results = evaluation.run_scenario(scenario([{"customer": "Late?"}, {"customer": "Why?"}]))
+    finally:
+        from resolvelane.llm import load_prices
+        load_prices({})
+    usage = summarize(results)["usage"]
+    assert usage["app"]["calls"] == 2 and usage["app"]["input_tokens"] == 4000
+    assert usage["app"]["tokens_per_reply"] == 2100
+    assert usage["app"]["cost_per_reply_usd"] == 0.0025 and usage["app"]["cost_per_case_usd"] == 0.005
+    # The judge's model has no price: its tokens are counted, its cost is unknown, never zero.
+    assert usage["judge"]["calls"] == 2 and usage["judge"]["output_tokens"] == 600 and usage["judge"]["cost_usd"] is None
+    assert results[0].usage["calls"] == 1

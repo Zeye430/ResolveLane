@@ -308,3 +308,56 @@ def test_traces_survive_a_restart(tmp_path):
     store.close()
     trace = CaseStore(path).get(case_id).messages[1].trace
     assert trace.written_by == "agent" and trace.issues == (Issue.MISSING_ITEM,) and trace.model == "test-model"
+
+
+class MeteredAgent(TracedAgent):
+    """A traced agent that spends tokens the way a real one does: through create_message."""
+
+    def draft(self, request):
+        from types import SimpleNamespace
+
+        from resolvelane.llm import create_message
+        answer = SimpleNamespace(usage=SimpleNamespace(input_tokens=1500, output_tokens=120), content=[])
+        client = SimpleNamespace(messages=SimpleNamespace(create=lambda **request: answer))
+        create_message(client, "reply", model="test-model", max_tokens=100, messages=[])
+        return super().draft(request)
+
+
+def test_each_reply_records_the_model_usage_it_cost_even_when_its_draft_is_not_used(monkeypatch):
+    from resolvelane.llm import load_prices
+    from resolvelane.reply_agent import AgentFailed
+
+    monkeypatch.setenv("RESOLVELANE_MODEL_PRICES", '{"test-model": {"input": 2.0, "output": 10.0}}')
+    try:
+        desk = Desk(reply_agent=MeteredAgent(AgentDraft("Noted; a support agent will review it.", None, [], 1),
+                                             AgentFailed("ungrounded_number")))
+        case_id = desk.chat("One of my wraps is missing.")["case_id"]
+        desk.chat("It was the vegetable wrap.", case_id=case_id)
+    finally:
+        load_prices({})
+    first, second = (message["trace"] for message in desk.case(case_id)["messages"] if message["role"] == "assistant")
+    assert first["usage"] == {"calls": 1, "input_tokens": 1500, "output_tokens": 120, "cache_read_tokens": 0,
+                              "cache_write_tokens": 0, "cost_usd": 0.0042}
+    # The rule-based reply was sent, but the agent's discarded draft was paid for.
+    assert second["written_by"] == "rules" and second["usage"]["calls"] == 1 and second["usage"]["cost_usd"] == 0.0042
+
+
+def test_usage_without_prices_is_counted_in_tokens_only_and_old_traces_have_none(tmp_path):
+    import sqlite3
+
+    path = str(tmp_path / "cases.sqlite3")
+    store = CaseStore(path, clock=Clock())
+    desk = Desk.__new__(Desk)
+    desk.store, desk.app = store, create_app(TokenRegistry(TOKENS), case_store=store,
+                                             reply_agent=MeteredAgent(AgentDraft("Noted.", None, [], 1)))
+    case_id = desk.chat("One of my wraps is missing.")["case_id"]
+    trace = desk.case(case_id)["messages"][1]["trace"]
+    assert trace["usage"]["input_tokens"] == 1500 and trace["usage"]["cost_usd"] is None
+    store.close()
+
+    # A trace stored before usage was recorded.
+    with sqlite3.connect(path) as db:
+        stored = json.loads(db.execute("SELECT trace FROM case_messages WHERE trace IS NOT NULL").fetchone()[0])
+        del stored["usage"]
+        db.execute("UPDATE case_messages SET trace = ? WHERE trace IS NOT NULL", (json.dumps(stored),))
+    assert CaseStore(path).get(case_id).messages[1].trace.usage is None

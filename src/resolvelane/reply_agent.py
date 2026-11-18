@@ -30,7 +30,7 @@ from resolvelane.domain.delivery import Order, OrderStatus, SupportPolicy
 from resolvelane.domain.knowledge import Citation
 from resolvelane.domain.refund import PaymentStatus, Refund, RefundStatus
 from resolvelane.knowledge import HelpCenter
-from resolvelane.llm import REQUEST_ERRORS, LLMProvider
+from resolvelane.llm import REQUEST_ERRORS, LLMProvider, create_message
 from resolvelane.schemas import CustomerOrderView
 from resolvelane.skills import SkillLibrary, skill_instructions
 from resolvelane.refunds import RefundProposal, Refunded, describe, money, payment_state
@@ -226,8 +226,8 @@ class ReplyAgent:
         traces: list[ToolTrace] = []
         for round_number in range(1, self.MAX_ROUNDS + 1):
             try:
-                response = self.llm.client.messages.create(
-                    model=self.llm.model, max_tokens=4096, system=system,
+                response = create_message(
+                    self.llm.client, "reply", model=self.llm.model, max_tokens=4096, system=system,
                     tools=self.gateway.definitions(), messages=messages)
             except anthropic.APIConnectionError as error:  # includes timeouts
                 self.llm.breaker.failed(ticket)

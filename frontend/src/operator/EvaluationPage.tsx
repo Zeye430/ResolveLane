@@ -2,7 +2,8 @@ import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import type { Api } from "../api/client";
 import type { EvalReport, EvalRun, EvalTurn } from "../api/types";
-import { humanize, time } from "../shared/format";
+import { count, humanize, time, usd } from "../shared/format";
+import { totalTokens } from "../support/usage";
 import { ErrorNote, Loading, Panel } from "../shared/ui";
 import {
   byScenario, comparisons, metricRows, percent, points, sameRun, turnFailed, type ScenarioResult, type Target,
@@ -81,6 +82,8 @@ function RunDetail({ api, run, targets, tolerance }: {
           <dd>{run.counts.turns} replies{run.repeat > 1 ? ` (each scenario ${run.repeat} times)` : ""} · {run.counts.checks} code checks · {run.counts.judged} judged
             {run.counts.judge_failures > 0 && <span className="late"> · {run.counts.judge_failures} not judged (judge error)</span>}</dd>
           <dt>Time per reply</dt><dd>mean {run.seconds.mean} s · p95 {run.seconds.p95} s <span className="hint">of {run.counts.turns} replies</span></dd>
+          <dt>Model usage</dt>
+          <dd>{run.usage ? <RunUsage usage={run.usage} /> : <span className="muted">not recorded</span>}</dd>
           <dt>Rule-based</dt>
           <dd>{Object.keys(run.fallbacks).length === 0 ? "none"
             : Object.entries(run.fallbacks).map(([reason, count]) => `${count} × ${humanize(reason)}`).join(", ")}</dd>
@@ -188,7 +191,8 @@ function TurnView({ turn }: { turn: EvalTurn }) {
   return (
     <li className={`turn ${turnFailed(turn) ? "turn-failed" : ""}`}>
       <p className="hint">Step {turn.step}{turn.run > 1 ? `, run ${turn.run}` : ""} · {turn.seconds} s ·{" "}
-        {turn.written_by_agent ? "written by the AI agent" : `rule-based (${humanize(turn.fallback)})`}</p>
+        {turn.written_by_agent ? "written by the AI agent" : `rule-based (${humanize(turn.fallback)})`}
+        {turn.usage && ` · ${count(totalTokens(turn.usage))} tokens`}</p>
       <p><strong>Customer:</strong> {turn.message}</p>
       <p className="reply"><strong>Reply:</strong> {turn.reply}</p>
       <ul className="verdicts">
@@ -209,3 +213,24 @@ function TurnView({ turn }: { turn: EvalTurn }) {
     </li>
   );
 }
+
+/** The application's model usage per reply and per case, and the judge's apart: a production
+ * system makes the first, never the second. */
+function RunUsage({ usage }: { usage: NonNullable<EvalRun["usage"]> }) {
+  const { app, judge } = usage;
+  const judgeTokens = judge.input_tokens + judge.output_tokens + judge.cache_read_tokens + judge.cache_write_tokens;
+  return (
+    <>
+      {count(app.tokens_per_reply)} tokens per reply ·{" "}
+      {app.cost_per_reply_usd === null || app.cost_per_case_usd === null
+        ? <span className="muted">no price configured</span>
+        : <>{usd(app.cost_per_reply_usd)} per reply · {usd(app.cost_per_case_usd)} per case</>}
+      <span className="hint"> · {app.calls} model calls in all</span>
+      {judge.calls > 0 && (
+        <span className="hint"> · judge {count(judgeTokens)} tokens
+          {judge.cost_usd === null ? "" : `, ${usd(judge.cost_usd)}`}</span>
+      )}
+    </>
+  );
+}
+

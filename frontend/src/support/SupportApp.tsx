@@ -2,11 +2,12 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import type { Api } from "../api/client";
 import type { CaseStatus, SupportCase } from "../api/types";
-import { humanize, issueLabel, shortId, time, waited } from "../shared/format";
+import { count, humanize, issueLabel, shortId, time, usd, waited } from "../shared/format";
 import { Composer, Conversation, ErrorNote, Loading, Panel, StatusBadge } from "../shared/ui";
 import { OrderFacts } from "./OrderFacts";
 import { RefundCard } from "./RefundCard";
 import { ReplyTraceView } from "./ReplyTraceView";
+import { caseUsage } from "./usage";
 import { useRetryKey } from "../shared/useRetryKey";
 
 const STATUSES: CaseStatus[] = ["needs_review", "open", "resolved"];
@@ -77,6 +78,7 @@ function CaseWorkspace({ api, caseId }: { api: Api; caseId: string }) {
           <p className="muted">
             <span className="mono">{item.case_id}</span> · {item.customer_id} · opened {time(item.created_at)} · {item.issues.map(issueLabel).join(", ") || "no issue"}
           </p>
+          <UsageLine messages={item.messages} />
           {item.summary && (
             <details className="summary"><summary>Summary of earlier messages (model-written)</summary>
               <p>{item.summary}</p></details>
@@ -142,5 +144,19 @@ function Resolve({ api, item, onChanged }: { api: Api; item: SupportCase; onChan
         <button type="submit" disabled={!note.trim() || undecided || resolve.isPending}>Resolve case</button>
       </form>
     </Panel>
+  );
+}
+
+/** What the assistant's replies in this case have cost in model calls so far. */
+function UsageLine({ messages }: { messages: SupportCase["messages"] }) {
+  const usage = caseUsage(messages);
+  if (usage.replies === 0) return null;
+  const unrecorded = usage.unrecorded === 0 ? ""
+    : ` (${usage.unrecorded} earlier repl${usage.unrecorded === 1 ? "y" : "ies"} not recorded)`;
+  return (
+    <p className="hint">
+      AI usage for this case: {usage.calls} model call{usage.calls === 1 ? "" : "s"} · {count(usage.tokens)} tokens ·{" "}
+      {usage.cost === null ? "no price configured" : usd(usage.cost)}{unrecorded}
+    </p>
   );
 }

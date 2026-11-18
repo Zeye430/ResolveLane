@@ -46,6 +46,18 @@ class ToolCall:
 
 
 @dataclass(frozen=True)
+class ModelUsage:
+    """Language model calls made while recognizing a message and writing its reply, as the
+    provider reported them, including calls whose answer was not used."""
+    calls: int
+    input_tokens: int
+    output_tokens: int
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
+    cost_usd: float | None = None   # from configured prices; None when a model has no price
+
+
+@dataclass(frozen=True)
 class ReplyTrace:
     """How an assistant reply came about, kept with the message for support agents and engineers.
 
@@ -61,6 +73,7 @@ class ReplyTrace:
     tools: tuple[ToolCall, ...] = ()
     skills: tuple[str, ...] = ()    # name@version of each handling guide given to the agent
     repeat: bool = False            # nearly the same as the assistant's previous reply
+    usage: ModelUsage | None = None  # None for replies stored before usage was recorded
 
 
 @dataclass(frozen=True)
