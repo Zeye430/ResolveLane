@@ -66,8 +66,12 @@ jobs:
         run: npm run typecheck
       - name: Test
         run: npm test
-      - name: Build
-        run: npm run build
+      - name: Build, with no accounts in the bundle
+        # Demo accounts are served at run time only; a build must not contain them even when
+        # RESOLVELANE_API_TOKENS is set where it runs.
+        run: |
+          RESOLVELANE_API_TOKENS='{"ci-check-token-xxxxxxxxxxxxxxxx": {"subject_id": "ci-check", "role": "customer"}}' npm run build
+          ! grep -rq "ci-check-token" dist
 
   containers:
     name: Containers
