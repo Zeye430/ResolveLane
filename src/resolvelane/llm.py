@@ -18,6 +18,7 @@ from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
+from urllib.parse import urlparse
 
 import anthropic
 
@@ -37,6 +38,22 @@ class LLMProvider:
     client: anthropic.Anthropic
     model: str
     breaker: CircuitBreaker
+    host: str = ""  # the provider's API host, recorded with evaluation runs
+
+
+def provider_host(base_url: str) -> str:
+    return urlparse(base_url).hostname or base_url
+
+
+def misleading_model_name(model: str, base_url: str) -> str | None:
+    """Why a model name would not mean what it says at this endpoint. Compatible providers accept
+    Claude model names and answer with a model of their own, and report the requested name back,
+    so the response cannot reveal it; only the configuration can."""
+    host = provider_host(base_url)
+    if model.startswith("claude") and not (host == "anthropic.com" or host.endswith(".anthropic.com")):
+        return (f"{model} is a Claude model name, but {host} is not Anthropic's API: a compatible provider "
+                f"may answer with a model of its own under that name")
+    return None
 
 
 def load_llm_provider(environ: Mapping[str, str] = os.environ) -> LLMProvider | None:
@@ -44,16 +61,20 @@ def load_llm_provider(environ: Mapping[str, str] = os.environ) -> LLMProvider | 
     if not api_key:
         logger.info("ANTHROPIC_API_KEY is not set; the language model is off")
         return None
+    base_url = environ.get("ANTHROPIC_BASE_URL", "").strip() or DEFAULT_BASE_URL
+    model = environ.get("ANTHROPIC_MODEL", "").strip() or DEFAULT_MODEL
+    if (problem := misleading_model_name(model, base_url)) is not None:
+        logger.warning("%s; set ANTHROPIC_MODEL to the provider's own model name", problem)
     client = anthropic.Anthropic(
         api_key=api_key,
         # Passed explicitly: given None, the SDK reads ANTHROPIC_BASE_URL itself and would use an
         # empty value from a .env file as the URL.
-        base_url=environ.get("ANTHROPIC_BASE_URL", "").strip() or DEFAULT_BASE_URL,
+        base_url=base_url,
         timeout=float(environ.get("RESOLVELANE_LLM_TIMEOUT_S", "10")),
         max_retries=1,
     )
-    return LLMProvider(client, environ.get("ANTHROPIC_MODEL", "").strip() or DEFAULT_MODEL,
-                       CircuitBreaker("llm", failure_threshold=3, cooldown_s=30))
+    return LLMProvider(client, model, CircuitBreaker("llm", failure_threshold=3, cooldown_s=30),
+                       provider_host(base_url))
 
 
 # --- token usage and cost ---------------------------------------------------------------------

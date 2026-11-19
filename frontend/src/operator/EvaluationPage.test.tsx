@@ -50,6 +50,17 @@ describe("EvaluationPage", () => {
     expect(screen.getByText(/judge 46,000 tokens/)).toBeInTheDocument();
   });
 
+  it("flags a judge from the agent's own provider", async () => {
+    const same = { ...latest, models: { ...latest.models, agent_provider: "api.example.com", judge_provider: "api.example.com" } };
+    show({ reports: [same], baseline: null, tolerance: 0.1, unreadable: 0 });
+    expect(await screen.findByText("Judge from the agent's provider")).toBeInTheDocument();
+    cleanup();
+    const other = { ...latest, models: { ...latest.models, agent_provider: "api.example.com", judge_provider: "api.other.example" } };
+    show({ reports: [other], baseline: null, tolerance: 0.1, unreadable: 0 });
+    expect(await screen.findByText(/at api\.other\.example/)).toBeInTheDocument();
+    expect(screen.queryByText("Judge from the agent's provider")).toBeNull();
+  });
+
   it("explains how to make the first run", async () => {
     show({ reports: [], baseline: null, tolerance: 0.1, unreadable: 1 });
     expect(await screen.findByText("python -m resolvelane.evaluation")).toBeInTheDocument();

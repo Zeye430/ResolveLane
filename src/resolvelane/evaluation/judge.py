@@ -152,10 +152,11 @@ def parse(text: str) -> dict[str, Verdict]:
 class Judge:
     MAX_TOKENS_LIMIT = 16384
 
-    def __init__(self, client: anthropic.Anthropic, model: str, max_tokens: int = 4096):
+    def __init__(self, client: anthropic.Anthropic, model: str, max_tokens: int = 4096, provider: str = ""):
         self.client = client
         self.model = model
         self.max_tokens = max_tokens
+        self.provider = provider  # the API host, recorded with the run
 
     @staticmethod
     def prompt(material: Material) -> str:

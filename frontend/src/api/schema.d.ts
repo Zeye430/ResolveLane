@@ -597,10 +597,20 @@ export interface components {
             /** Agent */
             agent: string;
             /**
+             * Agent Provider
+             * @description API host of the reply model, when recorded
+             */
+            agent_provider?: string | null;
+            /**
              * Judge
              * @description None when the run had no judge
              */
             judge: string | null;
+            /**
+             * Judge Provider
+             * @description API host of the judge, when recorded
+             */
+            judge_provider?: string | null;
         };
         /** EvalReportListView */
         EvalReportListView: {

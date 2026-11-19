@@ -323,6 +323,8 @@ class RefundActionResponse(BaseModel):
 class EvalModelsView(_View):
     agent: str
     judge: str | None = Field(description="None when the run had no judge")
+    agent_provider: str | None = Field(default=None, description="API host of the reply model, when recorded")
+    judge_provider: str | None = Field(default=None, description="API host of the judge, when recorded")
 
 
 class EvalCountsView(_View):

@@ -284,8 +284,11 @@ def _post(app, token: str, body: dict) -> dict:
 
 # --- reports --------------------------------------------------------------------------------
 
-def suite_id(scenarios_text: str, agent_model: str, judge_model: str | None) -> str:
+def suite_id(scenarios_text: str, agent_model: str, judge_model: str | None, agent_provider: str = "",
+             judge_provider: str = "") -> str:
     parts = [scenarios_text, agent_model, judge_model or "no judge"]
+    if agent_provider or judge_provider:  # the same model name can be another model at another provider
+        parts.append(f"providers: {agent_provider} {judge_provider}")
     if judge_model:
         parts += [judge_module.PROMPT, judge_module.EXAMPLES, json.dumps(judge_module.CRITERIA, sort_keys=True)]
     return hashlib.sha256("\n".join(parts).encode()).hexdigest()[:16]

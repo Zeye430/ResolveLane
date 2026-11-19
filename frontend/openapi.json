@@ -667,6 +667,18 @@
       "title": "Agent",
       "type": "string"
      },
+     "agent_provider": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "API host of the reply model, when recorded",
+      "title": "Agent Provider"
+     },
      "judge": {
       "anyOf": [
        {
@@ -678,6 +690,18 @@
       ],
       "description": "None when the run had no judge",
       "title": "Judge"
+     },
+     "judge_provider": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "API host of the judge, when recorded",
+      "title": "Judge Provider"
      }
     },
     "required": [

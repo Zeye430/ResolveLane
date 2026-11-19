@@ -295,3 +295,41 @@ def test_a_report_counts_the_application_and_the_judge_apart_with_cost_per_reply
     # The judge's model has no price: its tokens are counted, its cost is unknown, never zero.
     assert usage["judge"]["calls"] == 2 and usage["judge"]["output_tokens"] == 600 and usage["judge"]["cost_usd"] is None
     assert results[0].usage["calls"] == 1
+
+
+# --- the judge's provider --------------------------------------------------------------------
+
+def test_the_judge_runs_on_the_reply_models_provider_by_default():
+    from resolvelane.evaluation.__main__ import load_judge
+    judge = load_judge({"ANTHROPIC_API_KEY": "test-key-xxxxxxxxxxxx", "ANTHROPIC_BASE_URL": "https://api.example.com/anthropic",
+                        "ANTHROPIC_MODEL": "example-flash"})
+    assert (judge.model, judge.provider) == ("example-flash", "api.example.com")
+
+
+def test_a_judge_on_its_own_provider_needs_its_endpoint_and_model():
+    from resolvelane.evaluation.__main__ import JudgeConfigError, load_judge
+    agent = {"ANTHROPIC_API_KEY": "test-key-xxxxxxxxxxxx", "ANTHROPIC_BASE_URL": "https://api.example.com/anthropic",
+             "ANTHROPIC_MODEL": "example-flash", "RESOLVELANE_JUDGE_API_KEY": "judge-key-xxxxxxxxxxxx"}
+    with pytest.raises(JudgeConfigError, match="RESOLVELANE_JUDGE_BASE_URL"):
+        load_judge(agent)  # never silently the agent's endpoint with the judge's key
+    judge = load_judge({**agent, "RESOLVELANE_JUDGE_BASE_URL": "https://api.other.example/anthropic",
+                        "RESOLVELANE_JUDGE_MODEL": "other-pro"})
+    assert (judge.model, judge.provider) == ("other-pro", "api.other.example")
+
+
+def test_claude_model_names_are_refused_at_other_providers():
+    # Compatible providers answer Claude model names with their own models and report the
+    # requested name back, so only the configuration can catch it.
+    from resolvelane.evaluation.__main__ import JudgeConfigError, load_judge
+    from resolvelane.llm import misleading_model_name
+    assert misleading_model_name("claude-opus-5-5", "https://api.example.com/anthropic")
+    assert misleading_model_name("claude-opus-5-5", "https://api.anthropic.com") is None
+    assert misleading_model_name("example-flash", "https://api.example.com/anthropic") is None
+    with pytest.raises(JudgeConfigError, match="not Anthropic's API"):
+        load_judge({"ANTHROPIC_API_KEY": "test-key-xxxxxxxxxxxx", "ANTHROPIC_BASE_URL": "https://api.example.com/anthropic",
+                    "RESOLVELANE_JUDGE_MODEL": "claude-opus-5-5"})
+
+
+def test_the_suite_changes_with_the_judges_provider():
+    base = suite_id("scenarios", "agent-model", "judge-model", "agent.example", "judge.example")
+    assert suite_id("scenarios", "agent-model", "judge-model", "agent.example", "other.example") != base

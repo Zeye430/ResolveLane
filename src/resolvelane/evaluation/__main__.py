@@ -34,7 +34,8 @@ from resolvelane.evaluation.reports import EVALS, compare, load_report, report_i
 from resolvelane.evaluation.runner import Evaluation, report, suite_id  # noqa: E402
 from resolvelane.evaluation.scenarios import DEFAULT_SCENARIOS, Suite, load_suite  # noqa: E402
 from resolvelane.knowledge import HelpCenter  # noqa: E402
-from resolvelane.llm import DEFAULT_BASE_URL, load_llm_provider  # noqa: E402
+from resolvelane.llm import (DEFAULT_BASE_URL, load_llm_provider, metered, misleading_model_name,  # noqa: E402
+                             provider_host)
 from resolvelane.recognition import load_local_embedder, load_recognizer  # noqa: E402
 from resolvelane.reply_agent import load_reply_agent  # noqa: E402
 from resolvelane.simulator.fixtures import POLICIES  # noqa: E402
@@ -46,13 +47,32 @@ BASELINE = EVALS / "baseline.json"
 CALIBRATION = EVALS / "judge_calibration.json"
 
 
-def _judge(environ) -> Judge:
-    client = anthropic.Anthropic(api_key=environ["ANTHROPIC_API_KEY"],
-                                 base_url=environ.get("ANTHROPIC_BASE_URL", "").strip() or DEFAULT_BASE_URL,
-                                 timeout=60, max_retries=2)
-    model = (environ.get("RESOLVELANE_JUDGE_MODEL", "").strip() or environ.get("ANTHROPIC_MODEL", "").strip()
-             or "claude-opus-5-5")
-    return Judge(client, model)
+class JudgeConfigError(ValueError):
+    pass
+
+
+def load_judge(environ) -> Judge:
+    """The judge, by default on the reply model's provider. RESOLVELANE_JUDGE_API_KEY puts it on its
+    own provider, which then needs RESOLVELANE_JUDGE_BASE_URL and RESOLVELANE_JUDGE_MODEL too: a
+    judge from another model family does not favour the agent's writing as its own."""
+    own_key = environ.get("RESOLVELANE_JUDGE_API_KEY", "").strip()
+    if own_key:
+        api_key = own_key
+        base_url = environ.get("RESOLVELANE_JUDGE_BASE_URL", "").strip()
+        model = environ.get("RESOLVELANE_JUDGE_MODEL", "").strip()
+        if not base_url or not model:
+            raise JudgeConfigError("With RESOLVELANE_JUDGE_API_KEY, set RESOLVELANE_JUDGE_BASE_URL (the provider's "
+                                   "Anthropic-compatible endpoint) and RESOLVELANE_JUDGE_MODEL too")
+    else:
+        api_key = environ["ANTHROPIC_API_KEY"]
+        base_url = environ.get("ANTHROPIC_BASE_URL", "").strip() or DEFAULT_BASE_URL
+        model = (environ.get("RESOLVELANE_JUDGE_MODEL", "").strip() or environ.get("ANTHROPIC_MODEL", "").strip()
+                 or "claude-opus-5-5")
+    if (problem := misleading_model_name(model, base_url)) is not None:
+        raise JudgeConfigError(problem)
+    # Judges that think before answering can take a minute or more on one reply.
+    client = anthropic.Anthropic(api_key=api_key, base_url=base_url, timeout=120, max_retries=2)
+    return Judge(client, model, provider=provider_host(base_url))
 
 
 def _commit() -> str | None:
@@ -69,6 +89,11 @@ def _commit() -> str | None:
 
 def calibrate(judge: Judge, path: Path = CALIBRATION) -> int:
     items = json.loads(path.read_text())["items"]
+    with metered() as meter:
+        return _calibrate(judge, items, meter)
+
+
+def _calibrate(judge: Judge, items: list, meter) -> int:
     agree = {name: 0 for name in CRITERIA}
     false_passes = {name: 0 for name in CRITERIA}
     judged = 0
@@ -86,7 +111,10 @@ def calibrate(judge: Judge, path: Path = CALIBRATION) -> int:
                 false_passes[name] += verdict.passed and not label
                 print(f"  {item['id']} {name}: labeled {'pass' if label else 'fail'}, judge "
                       f"{'pass' if verdict.passed else 'fail'}: {verdict.reason}")
-    print(f"\nJudge {judge.model} on {judged} of {len(items)} labeled replies:")
+    usage, cost = meter.usage(), meter.cost()
+    print(f"\nJudge {judge.model} at {judge.provider} on {judged} of {len(items)} labeled replies "
+          f"({usage.input_tokens + usage.cache_read_tokens} input and {usage.output_tokens} output tokens"
+          + (f", about ${cost:.4f}" if cost is not None else "") + "):")
     for name in CRITERIA:
         print(f"  {name:<18} agreement {agree[name] / judged if judged else 0:.0%}"
               f"   false passes {false_passes[name]}")
@@ -108,8 +136,13 @@ def main(argv=None) -> int:
     if not environ.get("ANTHROPIC_API_KEY", "").strip():
         print("ANTHROPIC_API_KEY is not set; the evaluation needs the language model.", file=sys.stderr)
         return 2
+    try:
+        judge = None if args.no_judge and not args.calibrate else load_judge(environ)
+    except JudgeConfigError as error:
+        print(f"Judge: {error}", file=sys.stderr)
+        return 2
     if args.calibrate:
-        return calibrate(_judge(environ))
+        return calibrate(judge)
 
     text = args.scenarios.read_text()
     suite = load_suite(args.scenarios)
@@ -124,7 +157,6 @@ def main(argv=None) -> int:
     embedder = load_local_embedder(environ)
     recognizer = load_recognizer(environ, llm=llm, local_embedder=embedder)
     agent = load_reply_agent(llm, POLICIES, HelpCenter(ARTICLES, embedder), load_skills(environ), ToolGateway())
-    judge = None if args.no_judge else _judge(environ)
     evaluation = Evaluation(recognizer, agent, judge)
 
     def progress(scenario, run, turns):
@@ -134,10 +166,12 @@ def main(argv=None) -> int:
               + (f", {sum(not v.passed for v in verdicts)} failed judgements" if judge else ""))
 
     results = evaluation.run(suite, args.repeat, progress)
-    models = {"agent": llm.model, "judge": judge.model if judge else None}
+    models = {"agent": llm.model, "judge": judge.model if judge else None,
+              "agent_provider": llm.host, "judge_provider": judge.provider if judge else None}
     full_suite = not args.only and args.scenarios == DEFAULT_SCENARIOS
     current = report(results, suite_id(text if full_suite else json.dumps(suite.model_dump(mode="json")),
-                                       llm.model, models["judge"]), models, args.repeat, _commit(),
+                                       llm.model, models["judge"], llm.host, models["judge_provider"] or ""),
+                     models, args.repeat, _commit(),
                      suite.scenarios)
     summary = current["summary"]
 

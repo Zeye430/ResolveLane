@@ -76,7 +76,7 @@ function RunDetail({ api, run, targets, tolerance }: {
         <dl className="facts">
           <dt>Started</dt><dd>{time(run.created_at)}</dd>
           <dt>Suite</dt><dd><span className="mono">{run.suite_id}</span> <span className="hint">scenarios, judge instructions and models</span></dd>
-          <dt>Models</dt><dd>agent {run.models.agent} · judge {run.models.judge ?? "none (no judge metrics)"}</dd>
+          <dt>Models</dt><dd><Models models={run.models} /></dd>
           <dt>Code</dt><dd>{run.commit ? <span className="mono">{run.commit}</span> : <span className="muted">commit not recorded</span>}</dd>
           <dt>Sample</dt>
           <dd>{run.counts.turns} replies{run.repeat > 1 ? ` (each scenario ${run.repeat} times)` : ""} · {run.counts.checks} code checks · {run.counts.judged} judged
@@ -230,6 +230,22 @@ function RunUsage({ usage }: { usage: NonNullable<EvalRun["usage"]> }) {
         <span className="hint"> · judge {count(judgeTokens)} tokens
           {judge.cost_usd === null ? "" : `, ${usd(judge.cost_usd)}`}</span>
       )}
+    </>
+  );
+}
+
+/** The agent and judge models with their providers. A judge from the agent's own provider is
+ * flagged: a model family may favour its own writing. */
+function Models({ models }: { models: EvalRun["models"] }) {
+  const at = (provider?: string | null) => (provider ? <span className="hint"> at {provider}</span> : null);
+  const sameProvider = models.judge !== null && Boolean(models.agent_provider)
+    && models.agent_provider === models.judge_provider;
+  return (
+    <>
+      agent <span className="mono">{models.agent}</span>{at(models.agent_provider)} · judge{" "}
+      {models.judge === null ? "none (no judge metrics)" : <><span className="mono">{models.judge}</span>{at(models.judge_provider)}</>}
+      {sameProvider && <> <span className="badge badge-proposed" title="A model family may favour its own writing">
+        Judge from the agent&apos;s provider</span></>}
     </>
   );
 }
